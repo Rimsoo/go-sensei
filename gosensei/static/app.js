@@ -69,8 +69,7 @@ function queueRender() {
 function displayedMoves() {
   const size = S.game.size;
   const out = [];
-  for (let i = 0; i < S.cursor; i++) out.push([S.mainColors[i], gtpToXY(S.main[i], size)]);
-  for (const [c, m] of S.variation) out.push([c, gtpToXY(m, size)]);
+  for (const [c, m] of S.pathMoves) out.push([c, gtpToXY(m, size)]);
   return out;
 }
 
@@ -152,7 +151,7 @@ function renderBoard() {
   }
 
   // Coup réellement joué ensuite dans la partie
-  const nextMain = !S.variation.length && S.cursor < S.main.length ? gtpToXY(S.main[S.cursor], size) : null;
+  const nextMain = !S.inVariation && S.moveNumber < S.main.length ? gtpToXY(S.main[S.moveNumber], size) : null;
 
   // Suggestions de KataGo
   if (opts.suggest && a && a.moves.length && !preview) {
@@ -261,15 +260,15 @@ function renderInfo() {
   }
   const total = S.main.length;
   const mn = $("#movenum");
-  mn.innerHTML = S.variation.length
-    ? `Coup <b>${S.cursor}</b>+${S.variation.length} <span class="muted">(variante)</span>`
-    : `Coup <b>${S.cursor}</b> / ${total}${S.lastPass ? " · passe" : ""}`;
-  $("#btn-main").classList.toggle("hidden", !S.variation.length);
+  mn.innerHTML = S.inVariation
+    ? `Coup <b>${S.moveNumber}</b> <span class="muted">(variante depuis le coup ${S.cursor})</span>`
+    : `Coup <b>${S.moveNumber}</b> / ${total}${S.lastPass ? " · passe" : ""}`;
+  $("#btn-main").classList.toggle("hidden", !S.inVariation);
 
   // Barre d'évaluation
   const a = S.analysis;
   const wr = a && a.winrate != null ? a.winrate : null;
-  const sc = a && a.score != null ? a.score : scoreAt(S.cursor);
+  const sc = a && a.score != null ? a.score : (S.lineEvals || [])[S.moveNumber];
   $("#evalbar .fill").style.width = `${(wr != null ? wr : 0.5) * 100}%`;
   $("#evalbar .label").textContent = sc == null ? "…" : `${sc >= 0 ? "Noir" : "Blanc"} +${Math.abs(sc).toFixed(1)}`;
 
@@ -283,12 +282,12 @@ function renderInfo() {
     const c = a.toPlay;
     $("#an-visits").textContent = `${a.visits} visites${a.final ? "" : "…"}`;
     let html = `Au trait : <b>${colorName(c)}</b> · ${Math.abs(a.score) < 0.5 ? "équilibré" : `<b>${a.score > 0 ? "Noir" : "Blanc"}</b> mène de ${Math.abs(a.score).toFixed(1)} pts`} · victoire Noir ${(a.winrate * 100).toFixed(0)}%`;
-    if (!S.variation.length && S.cursor < S.main.length) {
-      const before = scoreAt(S.cursor), after = scoreAt(S.cursor + 1);
-      const mc = S.mainColors[S.cursor];
+    if (!S.inVariation && S.moveNumber < S.main.length) {
+      const before = scoreAt(S.moveNumber), after = scoreAt(S.moveNumber + 1);
+      const mc = S.mainColors[S.moveNumber];
       if (before != null && after != null) {
         const loss = (before - after) * (mc === "B" ? 1 : -1);
-        html += `<br><span class="muted">Coup joué ensuite dans la partie (cercle bleu) :</span> <b>${S.main[S.cursor]}</b> `
+        html += `<br><span class="muted">Coup joué ensuite dans la partie (cercle bleu) :</span> <b>${S.main[S.moveNumber]}</b> `
           + `<span style="color:${lossColor(loss)}">${loss > 0.05 ? "−" + loss.toFixed(1) + " pts" : "bon coup"}</span>`;
       }
     }
@@ -322,7 +321,7 @@ function renderInfo() {
     if (!mine.length) box.innerHTML = `<span class="muted small-text">${r.status === "done" ? "Aucune erreur notable 🎉" : "Analyse de la partie en cours…"}</span>`;
     for (const m of mine) {
       const b = document.createElement("button");
-      b.className = `mistake ${m.level}` + (S.cursor === m.move_number - 1 && !S.variation.length ? " current" : "");
+      b.className = `mistake ${m.level}` + (S.moveNumber === m.move_number - 1 && !S.inVariation ? " current" : "");
       b.textContent = `${m.move_number}. ${m.played} −${m.loss.toFixed(1)}`;
       b.title = `${colorName(m.color)} a joué ${m.played} (${m.level}, −${m.loss} pts). Mieux : ${m.best}. Clic : position juste avant ce coup.`;
       b.onclick = () => post("/api/goto", { n: m.move_number - 1 });
@@ -337,18 +336,34 @@ function renderGraph() {
   if (!S || !S.game) return;
   const W = svg.clientWidth || 600, H = svg.clientHeight || 96;
   svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
-  const total = Math.max(1, S.main.length);
+  const line = S.line || [];
+  const evals = S.lineEvals || [];
+  const total = Math.max(1, S.main.length, line.length - 1);
   const curve = S.review ? S.review.curve.filter((c) => c[2] != null) : [];
-  const maxAbs = Math.min(60, Math.max(10, ...curve.map((c) => Math.abs(c[2]))));
+  const vals = curve.map((c) => Math.abs(c[2])).concat(evals.filter((v) => v != null).map(Math.abs));
+  const maxAbs = Math.ceil(Math.min(60, Math.max(10, ...vals)));
   const X = (t) => 4 + (t / total) * (W - 8);
   const Y = (s) => H / 2 - (Math.max(-maxAbs, Math.min(maxAbs, s)) / maxAbs) * (H / 2 - 6);
   el("line", { x1: 0, y1: H / 2, x2: W, y2: H / 2, stroke: "#3a404c", "stroke-width": 1 }, svg);
+  const branch = S.branch;
+  // Partie réelle (estompée quand on regarde une variante)
   if (curve.length > 1) {
     const pts = curve.map((c) => `${X(c[0])},${Y(c[2])}`).join(" ");
-    el("polygon", { points: `${X(curve[0][0])},${H / 2} ${pts} ${X(curve[curve.length - 1][0])},${H / 2}`, fill: "#5fb3a133" }, svg);
-    el("polyline", { points: pts, fill: "none", stroke: "#5fb3a1", "stroke-width": 2 }, svg);
+    el("polygon", { points: `${X(curve[0][0])},${H / 2} ${pts} ${X(curve[curve.length - 1][0])},${H / 2}`,
+      fill: branch == null ? "#5fb3a133" : "#5fb3a114" }, svg);
+    el("polyline", { points: pts, fill: "none", stroke: "#5fb3a1", "stroke-width": 2, opacity: branch == null ? 1 : 0.35 }, svg);
   }
-  const xc = X(S.cursor);
+  // Variante de la ligne affichée, depuis son point de départ
+  if (branch != null) {
+    const pts = [];
+    for (let t = branch - 1; t < evals.length; t++) if (evals[t] != null) pts.push(`${X(t)},${Y(evals[t])}`);
+    if (pts.length > 1) el("polyline", { points: pts.join(" "), fill: "none", stroke: "#e8893f", "stroke-width": 2.5 }, svg);
+    for (let t = branch; t < evals.length; t++) {
+      if (evals[t] == null) el("circle", { cx: X(t), cy: H / 2, r: 2, fill: "#e8893f88" }, svg); // en cours d'analyse
+    }
+    el("text", { x: W - 4, y: 12, fill: "#e8893f", "font-size": 11, "text-anchor": "end" }, svg).textContent = "variante";
+  }
+  const xc = X(S.moveNumber);
   el("line", { x1: xc, y1: 0, x2: xc, y2: H, stroke: "#e7e9ee", "stroke-width": 1.5, "stroke-dasharray": "3 3" }, svg);
   if (S.review) {
     for (const m of S.review.mistakes) {
@@ -356,22 +371,110 @@ function renderGraph() {
       const s = scoreAt(m.move_number);
       if (s == null) continue;
       el("circle", { cx: X(m.move_number), cy: Y(s), r: m.level === "gaffe" ? 5 : m.level === "erreur" ? 4 : 3,
-        fill: m.level === "gaffe" ? "#e0564f" : m.level === "erreur" ? "#e3b448" : "#b8c27a" }, svg);
+        fill: m.level === "gaffe" ? "#e0564f" : m.level === "erreur" ? "#e3b448" : "#b8c27a",
+        opacity: branch == null ? 1 : 0.4 }, svg);
     }
   }
   el("text", { x: 4, y: 12, fill: "#8d94a3", "font-size": 11 }, svg).textContent = `Noir +${maxAbs}`;
   el("text", { x: 4, y: H - 4, fill: "#8d94a3", "font-size": 11 }, svg).textContent = `Blanc +${maxAbs}`;
   svg.onclick = (e) => {
     const r = svg.getBoundingClientRect();
-    const t = Math.round(((e.clientX - r.left - 4) / (r.width - 8)) * total);
-    post("/api/goto", { n: Math.max(0, Math.min(total, t)) });
+    const t = Math.max(0, Math.round(((e.clientX - r.left - 4) / (r.width - 8)) * total));
+    // Dans la ligne affichée (variante comprise) si possible, sinon dans la partie
+    if (t < line.length) post("/api/goto-node", { id: line[t] });
+    else post("/api/goto", { n: Math.min(S.main.length, t) });
   };
+}
+
+// ------------------------------------------------------------------ arbre des coups
+const TREE_DX = 22, TREE_DY = 22;
+function layoutTree() {
+  const nodes = new Map(S.tree.map((n) => [n.id, n]));
+  const pos = new Map();
+  let maxRow = 0, maxDepth = 0;
+  // Parcours en profondeur : le premier enfant reste sur la ligne, les autres ouvrent une nouvelle ligne.
+  const stack = [[0, 0, 0]];
+  while (stack.length) {
+    const [id, depth, row] = stack.pop();
+    const n = nodes.get(id);
+    if (!n) continue;
+    pos.set(id, { x: depth, y: row });
+    maxDepth = Math.max(maxDepth, depth);
+    const kids = n.kids || [];
+    // Empilés à l'envers pour traiter le premier enfant (ligne principale) en premier.
+    const extra = kids.slice(1).map((k) => [k, depth + 1, ++maxRow]).reverse();
+    for (const e of extra) stack.push(e);
+    if (kids.length) stack.push([kids[0], depth + 1, row]);
+  }
+  return { nodes, pos, maxRow, maxDepth };
+}
+
+function renderTree() {
+  const svg = $("#tree");
+  svg.innerHTML = "";
+  if (!S || !S.game || !S.tree) return;
+  const { nodes, pos, maxRow, maxDepth } = layoutTree();
+  const W = (maxDepth + 2) * TREE_DX, H = (maxRow + 1) * TREE_DY + 16;
+  svg.setAttribute("width", W);
+  svg.setAttribute("height", H);
+  svg.setAttribute("viewBox", `0 0 ${W} ${H}`);
+  const px = (p) => 12 + p.x * TREE_DX, py = (p) => 18 + p.y * TREE_DY;
+  const onLine = new Set(S.line || []);
+  const mistakes = new Map((S.review ? S.review.mistakes : [])
+    .filter((m) => !S.game.student || m.color === S.game.student).map((m) => [m.move_number, m.level]));
+  // Numéros de coups
+  for (let d = 10; d <= maxDepth; d += 10) el("text", { x: 12 + d * TREE_DX, y: 9, fill: "#8d94a3", "font-size": 9, "text-anchor": "middle" }, svg).textContent = d;
+  // Liens
+  for (const n of S.tree) {
+    if (n.parent == null) continue;
+    const a = pos.get(n.parent), b = pos.get(n.id);
+    if (!a || !b) continue;
+    const d = a.y === b.y ? `M${px(a)},${py(a)}L${px(b)},${py(b)}` : `M${px(a)},${py(a)}L${px(b) - TREE_DX / 2},${py(b)}L${px(b)},${py(b)}`;
+    el("path", { d, fill: "none", stroke: onLine.has(n.id) ? "#8d94a3" : "#3a404c", "stroke-width": onLine.has(n.id) ? 2 : 1.5 }, svg);
+  }
+  // Nœuds
+  for (const n of S.tree) {
+    const p = pos.get(n.id);
+    if (!p) continue;
+    const g = el("g", { class: "tnode" }, svg);
+    const cx = px(p), cy = py(p);
+    if (n.id === S.current) el("circle", { cx, cy, r: 10, fill: "none", stroke: "#ff3d7f", "stroke-width": 2.5 }, g);
+    if (n.c == null) {
+      el("rect", { x: cx - 5, y: cy - 5, width: 10, height: 10, rx: 2, fill: "#8d94a3" }, g);
+    } else {
+      const lvl = n.main ? mistakes.get(p.x) : null;
+      const ring = n.src === "sensei" ? "#5fb3a1" : n.src === "user" ? "#3d7fe0"
+        : lvl === "gaffe" ? "#e0564f" : lvl === "erreur" ? "#e3b448" : lvl ? "#b8c27a" : "#555";
+      el("circle", { cx, cy, r: 6.5, fill: n.c === "B" ? "#111" : "#eee", stroke: ring, "stroke-width": n.main && !lvl ? 1 : 2.5 }, g);
+      if (n.marked) el("circle", { cx: cx + 6, cy: cy - 6, r: 2.5, fill: "#9b5de5" }, g);
+    }
+    const who = n.src === "sensei" ? " · variante de Sensei" : n.src === "user" ? " · ta variante" : "";
+    el("title", {}, g).textContent = n.c == null ? "Début" : `Coup ${p.x} · ${n.c === "B" ? "Noir" : "Blanc"} ${n.m}${who}`
+      + (n.main ? "" : "\nClic droit : supprimer cette variante");
+    el("circle", { cx, cy, r: 10, fill: "transparent" }, g); // zone cliquable
+    g.addEventListener("click", () => post("/api/goto-node", { id: n.id }).catch(() => {}));
+    g.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      if (!n.main && confirm("Supprimer cette variante (et sa suite) ?")) post("/api/delete-node", { id: n.id }).catch(() => {});
+    });
+  }
+  // Garder la position actuelle visible
+  const cur = pos.get(S.current);
+  const wrap = $("#tree-wrap");
+  if (cur) {
+    const x = px(cur), y = py(cur);
+    if (x < wrap.scrollLeft + 30 || x > wrap.scrollLeft + wrap.clientWidth - 30) wrap.scrollLeft = x - wrap.clientWidth / 2;
+    if (y < wrap.scrollTop + 10 || y > wrap.scrollTop + wrap.clientHeight - 10) wrap.scrollTop = y - wrap.clientHeight / 2;
+  }
+  const nVar = S.tree.filter((n) => !n.main && nodes.get(n.parent) && nodes.get(n.parent).main).length;
+  $("#tree-info").textContent = nVar ? `${nVar} variante${nVar > 1 ? "s" : ""} · bleu = toi, vert = Sensei · clic : y aller · ↑↓ : changer de variante` : "joue un coup sur le plateau pour créer une variante";
 }
 
 function render() {
   if (!S) return;
   renderInfo();
   renderBoard();
+  renderTree();
   renderGraph();
 }
 
@@ -456,7 +559,10 @@ function renderChat() {
     if (m.role === "user") d.textContent = m.text;
     else {
       const tools = (m.tools || []).map((t) => `<span class="tool">🔧 ${TOOL_FR[t] || t}</span>`).join("");
-      d.innerHTML = (tools ? `<div class="tools">${tools}</div>` : "") + `<div class="body">${markdown(m.text || "")}</div>`;
+      const links = (m.nodes || []).map((n) => `<button class="node-link${S && n.id === S.current ? " active" : ""}" data-node="${n.id}">`
+        + `${n.label.startsWith("variante") ? "🔀" : "📍"} ${esc(n.label)}</button>`).join("");
+      d.innerHTML = (tools ? `<div class="tools">${tools}</div>` : "") + `<div class="body">${markdown(m.text || "")}</div>`
+        + (links ? `<div class="node-links">${links}</div>` : "");
     }
     box.appendChild(d);
   });
@@ -465,6 +571,10 @@ function renderChat() {
   $("#btn-stop").classList.toggle("hidden", !busy);
 }
 
+$("#messages").addEventListener("click", (e) => {
+  const b = e.target.closest(".node-link");
+  if (b) post("/api/goto-node", { id: parseInt(b.dataset.node, 10) }).catch(() => toast("Cette position n'existe plus (variante supprimée ?)"));
+});
 $("#messages").addEventListener("mouseover", (e) => {
   const c = e.target.closest(".coord");
   const v = c ? c.dataset.c : null;
@@ -748,7 +858,9 @@ document.addEventListener("keydown", (e) => {
   }
   if (!S || !S.game || e.target.closest("textarea, input")) return;
   const step = (k) => post("/api/step", { k }).catch(() => {});
-  if (e.key === "ArrowLeft") step(e.shiftKey ? -5 : -1);
+  if (e.key === "ArrowUp") post("/api/sibling", { d: -1 }).catch(() => {});
+  else if (e.key === "ArrowDown") post("/api/sibling", { d: 1 }).catch(() => {});
+  else if (e.key === "ArrowLeft") step(e.shiftKey ? -5 : -1);
   else if (e.key === "ArrowRight") step(e.shiftKey ? 5 : 1);
   else if (e.key === "Home") post("/api/goto", { n: 0 });
   else if (e.key === "End") post("/api/goto", { n: S.main.length });
@@ -769,7 +881,12 @@ window.addEventListener("resize", queueRender);
 // ------------------------------------------------------------------ temps réel
 function connect() {
   const es = new EventSource("/events");
-  es.addEventListener("state", (e) => { S = JSON.parse(e.data); queueRender(); });
+  es.addEventListener("state", (e) => {
+    const prev = S && S.current;
+    S = JSON.parse(e.data);
+    queueRender();
+    if (prev !== S.current) renderChat(); // met à jour le lien de position actif
+  });
   es.addEventListener("chat", (e) => {
     const ev = JSON.parse(e.data);
     if (ev.kind === "start") {
@@ -778,6 +895,14 @@ function connect() {
     } else if (ev.kind === "delta") {
       const last = chat[chat.length - 1];
       if (last && last.role === "assistant") last.text += ev.text;
+    } else if (ev.kind === "node") {
+      const last = chat[chat.length - 1];
+      if (last && last.role === "assistant") {
+        last.nodes = last.nodes || [];
+        const prev = last.nodes[last.nodes.length - 1];
+        if (prev && prev.id === ev.id) prev.label = ev.label;
+        else last.nodes.push({ id: ev.id, label: ev.label });
+      }
     } else if (ev.kind === "tool") {
       const last = chat[chat.length - 1];
       if (last && last.role === "assistant") last.tools.push(ev.name);

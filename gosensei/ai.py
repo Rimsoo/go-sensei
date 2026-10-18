@@ -26,7 +26,8 @@ Comment travailler :
   efficacité d'un coup, grands points, direction du jeu, menaces, taille d'un coup en points, pierres faibles/mortes).
 - Raisonne en POINTS (« ce coup a coûté ~5 points ») plutôt qu'en % de victoire, plus parlant pour un débutant.
 - Montre au lieu de décrire : joue des variantes avec play_moves pour illustrer, puis reviens avec back_to_game.
-  Les annotations (annotate) s'effacent quand la position change : annote APRÈS avoir positionné le plateau.
+  Les variantes restent dans l'arbre des coups de l'élève, avec leurs annotations : il peut y revenir depuis ton message.
+  Les annotations (annotate) sont attachées à la position affichée : annote APRÈS avoir positionné le plateau.
   Lettres (A, B, C) pour comparer des options, triangles rouges pour les pierres faibles, cercles verts pour les bons points,
   'area' pour colorer une zone. Dis à l'élève ce que représentent les marques.
 - Vérifie avec KataGo avant d'affirmer, surtout pour la vie et la mort ; augmente les visites si une évaluation te surprend.
@@ -98,6 +99,17 @@ class Coach:
         if cur["text"] and not cur["text"].endswith("\n\n"):
             self.emit_text("\n\n")
         self.broadcast("chat", {"kind": "tool", "name": name})
+
+    def attach_node(self, nid, label):
+        """Rattache au message en cours une position que l'IA a montrée (lien cliquable)."""
+        if not self.busy:
+            return
+        nodes = self._current().setdefault("nodes", [])
+        if nodes and nodes[-1]["id"] == nid:
+            nodes[-1]["label"] = label
+        else:
+            nodes.append({"id": nid, "label": label})
+        self.broadcast("chat", {"kind": "node", "id": nid, "label": label})
 
     def finish(self, error=None):
         if error:

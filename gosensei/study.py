@@ -1,5 +1,9 @@
-"""État de la séance d'étude : partie chargée, position affichée, variantes,
-analyses KataGo et annotations. Partagé entre le navigateur et Claude (MCP)."""
+"""État de la séance d'étude : partie chargée, arbre des coups (partie + variantes),
+analyses KataGo et annotations. Partagé entre le navigateur et l'IA (outils du plateau).
+
+L'arbre : le nœud 0 est la position de départ, les nœuds 1..N sont les coups de la partie
+(ligne principale, toujours premier enfant). Les variantes jouées par l'élève ou par
+Sensei sont des branches supplémentaires, sauvegardées par partie avec leurs annotations."""
 
 import json
 import os
@@ -30,6 +34,19 @@ def live_visits(size, cpu=False):
     return v // 6 if cpu else v
 
 
+class Node:
+    __slots__ = ("id", "parent", "move", "children", "source", "marks", "main")
+
+    def __init__(self, nid, parent, move, source, main=False):
+        self.id = nid
+        self.parent = parent  # id du parent (None pour la racine)
+        self.move = move  # (couleur, point) ; None pour la racine
+        self.children = []  # ids ; le premier enfant est la suite principale
+        self.source = source  # "game", "user" ou "sensei"
+        self.marks = []
+        self.main = main
+
+
 class Study:
     def __init__(self, library, engine, cfg, broadcast, log):
         self.lib = library
@@ -40,14 +57,15 @@ class Study:
         self.review_dir = paths.REVIEW_DIR
         self.lock = threading.RLock()
         self.game = None
-        self.main = []  # [(couleur, point)]
-        self.cursor = 0
-        self.variation = []
-        self.marks = []
-        self.analyses = {}  # clé de position -> analyse
+        self.main = []  # [(couleur, point)] coups de la partie
+        self.nodes = {}
+        self.current = 0
+        self.next_id = 0
+        self.analyses = {}  # clé de position -> analyse détaillée (position affichée)
+        self.node_evals = {}  # clé de position -> {"score", "winrate"} (graphique des variantes)
         self.live_qid = None
+        self.line_qid = None
         self.review = None
-        self.review_gid = None
 
     def on_cpu(self):
         return self.engine.state.get("backend") in ("eigen", "eigenavx2")
@@ -55,18 +73,61 @@ class Study:
     def live_visits(self):
         return self.cfg["katago"]["live_visits"] or live_visits(self.size, self.on_cpu())
 
-    # ------------------------------------------------------------ positions
+    def review_visits(self):
+        return self.cfg["katago"]["review_visits"] or review_visits(self.size, self.on_cpu())
+
+    @property
+    def size(self):
+        return self.game["size"] if self.game else 9
+
+    # ------------------------------------------------------------ arbre
+    def path_ids(self, nid=None):
+        nid = self.current if nid is None else nid
+        out = []
+        while nid is not None:
+            out.append(nid)
+            nid = self.nodes[nid].parent
+        return out[::-1]
+
+    def moves_of(self, nid=None):
+        return [self.nodes[i].move for i in self.path_ids(nid)[1:]]
+
+    def line_ids(self):
+        """Ligne affichée : chemin jusqu'à la position actuelle, puis la suite (premiers enfants)."""
+        ids = self.path_ids()
+        n = self.nodes[ids[-1]]
+        while n.children:
+            n = self.nodes[n.children[0]]
+            ids.append(n.id)
+        return ids
+
+    def main_ancestor(self, nid=None):
+        """Dernier nœud de la partie réelle sur le chemin (point de départ de la variante)."""
+        for i in reversed(self.path_ids(nid)):
+            if self.nodes[i].main:
+                return i
+        return 0
+
+    # Compatibilité avec les outils (cursor = coup de la partie, variation = coups ajoutés)
+    @property
+    def cursor(self):
+        return self.main_ancestor()
+
+    @property
+    def variation(self):
+        return self.moves_of()[self.cursor:]
+
+    @property
+    def marks(self):
+        return self.nodes[self.current].marks if self.nodes else []
+
     def moves(self):
-        return self.main[: self.cursor] + self.variation
+        return self.moves_of()
 
     def key(self, moves=None):
         moves = self.moves() if moves is None else moves
         return (self.game["id"] if self.game else "") + "|" + " ".join(
             f"{c}{to_gtp(p, self.size)}" for c, p in moves)
-
-    @property
-    def size(self):
-        return self.game["size"] if self.game else 9
 
     def board_for(self, moves):
         b = Board(self.size)
@@ -98,16 +159,75 @@ class Study:
             "boardYSize": self.size,
         }
 
+    # ------------------------------------------------------------ sauvegarde de l'arbre
+    def _tree_path(self):
+        return os.path.join(paths.TREE_DIR, f"{self.game['id']}.json")
+
+    def save_tree(self):
+        if not self.game:
+            return
+        data = {"next": self.next_id, "nodes": [], "marks": {}}
+        for n in self.nodes.values():
+            if not n.main:
+                c, p = n.move
+                data["nodes"].append({"id": n.id, "parent": n.parent, "c": c, "m": to_gtp(p, self.size),
+                                      "src": n.source, "marks": n.marks})
+            elif n.marks:
+                data["marks"][str(n.id)] = n.marks
+        try:
+            tmp = self._tree_path() + ".tmp"
+            with open(tmp, "w") as f:
+                json.dump(data, f)
+            os.replace(tmp, self._tree_path())
+        except OSError as e:
+            self.log(f"Arbre : sauvegarde impossible ({e})")
+
+    def _load_tree(self):
+        try:
+            with open(self._tree_path()) as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            return
+        pending = data.get("nodes", [])
+        # Les parents sont toujours créés avant leurs enfants, mais on reste robuste à l'ordre.
+        for _ in range(len(pending) + 1):
+            rest = []
+            for d in pending:
+                if d["parent"] not in self.nodes:
+                    rest.append(d)
+                    continue
+                try:
+                    move = (d["c"], from_gtp(d["m"], self.size))
+                except (ValueError, KeyError):
+                    continue
+                n = Node(d["id"], d["parent"], move, d.get("src", "user"))
+                n.marks = d.get("marks", [])
+                self.nodes[n.id] = n
+                self.nodes[d["parent"]].children.append(n.id)
+            if not rest or len(rest) == len(pending):
+                break
+            pending = rest
+        for nid, marks in data.get("marks", {}).items():
+            if int(nid) in self.nodes:
+                self.nodes[int(nid)].marks = marks
+        self.next_id = max([self.next_id, data.get("next", 0)] + [i + 1 for i in self.nodes])
+
     # ------------------------------------------------------------ chargement
     def load_game(self, gid):
         g = self.lib.load(gid)
         with self.lock:
+            self._stop_line_analysis()
             self.game = g
             self.main = g["moves"]
-            self.cursor = 0
-            self.variation = []
-            self.marks = []
+            self.nodes = {0: Node(0, None, None, "game", main=True)}
+            for i, mv in enumerate(self.main, start=1):
+                self.nodes[i] = Node(i, i - 1, mv, "game", main=True)
+                self.nodes[i - 1].children.append(i)
+            self.next_id = len(self.main) + 1
+            self._load_tree()
+            self.current = 0
             self.analyses = {}
+            self.node_evals = {}
             self.review = None
         self.start_review()
         self.changed()
@@ -115,66 +235,117 @@ class Study:
 
     # ------------------------------------------------------------ navigation
     def goto(self, n):
+        """Position de la partie réelle après le coup n."""
         with self.lock:
-            self.cursor = max(0, min(int(n), len(self.main)))
-            self.variation = []
+            self.current = max(0, min(int(n), len(self.main)))
+        self.changed()
+
+    def goto_node(self, nid):
+        with self.lock:
+            nid = int(nid)
+            if nid not in self.nodes:
+                raise KeyError(f"position inconnue : {nid}")
+            self.current = nid
         self.changed()
 
     def step(self, k):
         with self.lock:
-            if k < 0 and self.variation:
-                drop = min(-k, len(self.variation))
-                self.variation = self.variation[: len(self.variation) - drop]
-                k += drop
-                if k == 0:
-                    self.changed()
-                    return
-            if self.variation and k > 0:
+            nid = self.current
+            for _ in range(abs(int(k))):
+                n = self.nodes[nid]
+                if k < 0 and n.parent is not None:
+                    nid = n.parent
+                elif k > 0 and n.children:
+                    nid = n.children[0]
+            if nid == self.current:
                 return
-            self.cursor = max(0, min(self.cursor + k, len(self.main)))
+            self.current = nid
+        self.changed()
+
+    def sibling(self, d):
+        """Passe à la variante voisine (même coup, autre branche)."""
+        with self.lock:
+            n = self.nodes[self.current]
+            if n.parent is None:
+                return
+            sibs = self.nodes[n.parent].children
+            i = sibs.index(n.id) + d
+            if not 0 <= i < len(sibs):
+                return
+            self.current = sibs[i]
         self.changed()
 
     def back_to_main(self):
         with self.lock:
-            self.variation = []
+            self.current = self.main_ancestor()
         self.changed()
 
-    def play(self, coords):
-        """Joue un ou plusieurs coups (GTP) depuis la position affichée.
-        Si le coup est celui de la partie, on avance simplement dans la partie."""
+    def play(self, coords, source="user"):
+        """Joue un ou plusieurs coups (GTP) depuis la position affichée. Un coup déjà présent
+        dans l'arbre (partie ou variante) est simplement suivi ; sinon une branche est créée."""
         if isinstance(coords, str):
             coords = coords.replace(",", " ").split()
         played = []
+        created = False
         with self.lock:
             for s in coords:
                 pt = from_gtp(s, self.size)
                 color = self.to_play()
                 board = self.board_for(self.moves())
                 board.play(color, pt)  # lève IllegalMove si illégal
-                if not self.variation and self.cursor < len(self.main) and self.main[self.cursor] == (color, pt):
-                    self.cursor += 1
-                else:
-                    self.variation.append((color, pt))
+                node = self.nodes[self.current]
+                child = next((c for c in node.children if self.nodes[c].move == (color, pt)), None)
+                if child is None:
+                    child = self.next_id
+                    self.next_id += 1
+                    self.nodes[child] = Node(child, node.id, (color, pt), source)
+                    node.children.append(child)
+                    created = True
+                self.current = child
                 played.append(f"{'Noir' if color == 'B' else 'Blanc'} {to_gtp(pt, self.size)}")
+        if created:
+            self.save_tree()
         self.changed()
         return played
 
-    def set_marks(self, marks, replace=True):
+    def delete_node(self, nid):
+        """Supprime une variante (le nœud et sa suite). La partie réelle ne peut pas être supprimée."""
         with self.lock:
+            nid = int(nid)
+            n = self.nodes.get(nid)
+            if not n or n.main:
+                raise ValueError("on ne peut supprimer que des variantes")
+            stack, doomed = [nid], set()
+            while stack:
+                i = stack.pop()
+                doomed.add(i)
+                stack.extend(self.nodes[i].children)
+            if self.current in doomed:
+                self.current = n.parent
+            self.nodes[n.parent].children.remove(nid)
+            for i in doomed:
+                del self.nodes[i]
+        self.save_tree()
+        self.changed()
+
+    def set_marks(self, marks, replace=True):
+        """Annotations de la position affichée (gardées avec elle dans l'arbre)."""
+        with self.lock:
+            node = self.nodes[self.current]
             if replace:
-                self.marks = []
+                node.marks = []
             for m in marks:
                 pt = from_gtp(m["point"], self.size)
                 if pt is None:
                     continue
-                self.marks.append({"x": pt[0], "y": pt[1], "label": str(m.get("label", ""))[:3],
+                node.marks.append({"x": pt[0], "y": pt[1], "label": str(m.get("label", ""))[:3],
                                    "shape": m.get("shape", ""), "color": m.get("color", "")})
+        self.save_tree()
         self.broadcast_state()
 
     def changed(self):
-        with self.lock:
-            self.marks = []
         self.start_live_analysis()
+        self.start_line_analysis()
         self.broadcast_state()
 
     # ------------------------------------------------------------ analyse
@@ -230,6 +401,8 @@ class Study:
                 if prev and prev["final"] and prev["visits"] >= a["visits"]:
                     return
                 self.analyses[key] = a
+                if a["final"]:
+                    self.node_evals[key] = {"score": a["score"], "winrate": a["winrate"]}
                 current = self.key() == key
             if current and (a["final"] or time.time() - last[0] > 0.5):
                 last[0] = time.time()
@@ -241,8 +414,51 @@ class Study:
         self.engine.ready.wait()
         self.start_live_analysis()
 
+    def _stop_line_analysis(self):
+        if self.line_qid:
+            self.engine.terminate(self.line_qid)
+            self.line_qid = None
+
+    def start_line_analysis(self):
+        """Évalue (rapidement) chaque coup des variantes de la ligne affichée, pour le graphique."""
+        if not self.game:
+            return
+        with self.lock:
+            self._stop_line_analysis()
+            line = self.line_ids()
+            moves = [self.nodes[i].move for i in line[1:]]
+            turns, keys = [], {}
+            for depth, nid in enumerate(line):
+                if self.nodes[nid].main:
+                    continue  # la revue de la partie couvre déjà la ligne principale
+                k = self.key(moves[:depth])
+                if k not in self.node_evals:
+                    turns.append(depth)
+                    keys[depth] = k
+            if not turns:
+                return
+            q = dict(self.katago_base(moves), maxVisits=self.review_visits(), analyzeTurns=turns, priority=5)
+        if not self.engine.ready.is_set():
+            return
+        last = [0.0]
+
+        def cb(resp):
+            if "error" in resp or resp.get("isDuringSearch"):
+                return
+            ri = resp.get("rootInfo", {})
+            k = keys.get(resp.get("turnNumber"))
+            if k is None:
+                return
+            with self.lock:
+                self.node_evals.setdefault(k, {"score": ri.get("scoreLead"), "winrate": ri.get("winrate")})
+            if time.time() - last[0] > 0.4:
+                last[0] = time.time()
+                self.broadcast_state()
+
+        self.line_qid = self.engine.query(q, cb)
+
     def analyze(self, moves=None, visits=None):
-        """Analyse bloquante (pour Claude). Réutilise l'analyse en direct si suffisante."""
+        """Analyse bloquante (pour l'IA). Réutilise l'analyse en direct si suffisante."""
         moves = self.moves() if moves is None else moves
         visits = visits or self.live_visits()
         key = self.key(moves)
@@ -256,6 +472,7 @@ class Study:
             prev = self.analyses.get(key)
             if not prev or prev["visits"] <= a["visits"]:
                 self.analyses[key] = a
+            self.node_evals[key] = {"score": a["score"], "winrate": a["winrate"]}
         if key == self.key():
             self.broadcast_state()
         return a
@@ -289,7 +506,7 @@ class Study:
         g = self.game
         gid = g["id"]
         n = len(self.main)
-        visits = self.cfg["katago"]["review_visits"] or review_visits(self.size, self.on_cpu())
+        visits = self.review_visits()
         path = self._review_path(gid)
         if os.path.exists(path):
             try:
@@ -364,7 +581,33 @@ class Study:
                         "best_pv": a["pv"], "level": level if played != a["best"] else None})
         return out
 
+    def describe_node(self, nid=None):
+        """Libellé court d'une position, ex. « coup 17 » ou « variante après le coup 16 : E8 D7 »."""
+        nid = self.current if nid is None else nid
+        base = self.main_ancestor(nid)
+        extra = self.moves_of(nid)[base:]
+        if not extra:
+            return f"coup {base}"
+        seq = " ".join(to_gtp(p, self.size) for _, p in extra[:6]) + (" …" if len(extra) > 6 else "")
+        return f"variante après le coup {base} : {seq}"
+
     # ------------------------------------------------------------ état client
+    def _line_evals(self, line):
+        """Score (point de vue Noir) de chaque position de la ligne affichée, ou None."""
+        out = []
+        turns = self.review["turns"] if self.review else {}
+        moves = [self.nodes[i].move for i in line[1:]]
+        for depth, nid in enumerate(line):
+            e = None
+            if self.nodes[nid].main:
+                t = turns.get(depth)
+                e = t["score"] if t else None
+            if e is None:
+                ev = self.node_evals.get(self.key(moves[:depth]))
+                e = ev["score"] if ev else None
+            out.append(e)
+        return out
+
     def state(self):
         with self.lock:
             if not self.game:
@@ -384,6 +627,15 @@ class Study:
                     "mistakes": [m for m in self.mistakes() if m["level"]],
                 }
             a = self.analyses.get(self.key(moves))
+            line = self.line_ids()
+            branch = next((d for d, nid in enumerate(line) if not self.nodes[nid].main), None)
+            tree = []
+            for n in self.nodes.values():
+                c, p = n.move if n.move else (None, None)
+                tree.append({"id": n.id, "parent": n.parent, "c": c,
+                             "m": to_gtp(p, self.size) if n.move else None,
+                             "src": n.source, "main": n.main, "kids": n.children, "marked": bool(n.marks)})
+            cur = self.nodes[self.current]
             return {
                 "game": {k: g.get(k) for k in ("id", "title", "black", "white", "black_rank", "white_rank",
                                                "size", "komi", "rules", "result", "source", "student", "date")},
@@ -391,16 +643,23 @@ class Study:
                 "main": [to_gtp(p, self.size) for _, p in self.main],
                 "mainColors": [c for c, _ in self.main],
                 "cursor": self.cursor,
-                "variation": [[c, to_gtp(p, self.size)] for c, p in self.variation],
+                "inVariation": not cur.main,
                 "moveNumber": len(moves),
+                "pathMoves": [[c, to_gtp(p, self.size)] for c, p in moves],
                 "toPlay": self.to_play(moves),
                 "stones": board.stones(),
                 "last": [last[1][0], last[1][1]] if last and last[1] else None,
                 "lastPass": bool(last and last[1] is None),
                 "captures": board.captures,
-                "marks": self.marks,
+                "marks": cur.marks,
                 "analysis": a,
                 "review": review,
+                "tree": tree,
+                "current": self.current,
+                "line": line,
+                "lineEvals": self._line_evals(line),
+                "branch": branch,
+                "nodeLabel": self.describe_node(),
             }
 
     def broadcast_state(self):

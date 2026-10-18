@@ -29,6 +29,16 @@ class Tools:
     def __init__(self, study, notes_path):
         self.s = study
         self.notes_path = notes_path
+        # Appelé quand l'IA montre une position (id du nœud, libellé) : le chat garde un lien
+        # vers chaque position expliquée, pour que l'élève puisse y revenir.
+        self.on_node = None
+
+    def _shown(self):
+        if self.on_node and self.s.game:
+            try:
+                self.on_node(self.s.current, self.s.describe_node())
+            except Exception:
+                pass
 
     # ---------------------------------------------------------------- défs
     def definitions(self):
@@ -44,14 +54,20 @@ class Tools:
              "description": "Affiche la position de la partie juste après le coup N (0 = plateau vide). Quitte la variante en cours.",
              "inputSchema": {"type": "object", "properties": {"move_number": {"type": "integer"}}, "required": ["move_number"]}},
             {"name": "play_moves",
-             "description": "Joue une suite de coups depuis la position affichée (crée une variante visible par l'élève). Les couleurs alternent automatiquement.",
+             "description": "Joue une suite de coups depuis la position affichée (crée une variante, gardée dans l'arbre des coups de l'élève). Les couleurs alternent automatiquement. Un coup déjà présent dans l'arbre est simplement suivi.",
              "inputSchema": {"type": "object", "properties": {"moves": {"type": "array", "items": pt}}, "required": ["moves"]}},
             {"name": "undo",
              "description": "Recule de N coups (dans la variante, puis dans la partie).",
              "inputSchema": {"type": "object", "properties": {"count": {"type": "integer", "default": 1}}}},
             {"name": "back_to_game",
-             "description": "Abandonne la variante et revient à la position de la partie réelle.",
+             "description": "Quitte la variante et revient à la position de la partie réelle d'où elle part (la variante reste dans l'arbre).",
              "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "list_variations",
+             "description": "Arbre des coups : variantes existantes (jouées par l'élève ou par toi), avec leur identifiant de position et leur point de départ.",
+             "inputSchema": {"type": "object", "properties": {}}},
+            {"name": "go_to_position",
+             "description": "Affiche une position de l'arbre par son identifiant (voir list_variations).",
+             "inputSchema": {"type": "object", "properties": {"position_id": {"type": "integer"}}, "required": ["position_id"]}},
             {"name": "analyze_position",
              "description": "Analyse KataGo de la position affichée : meilleurs coups (score et % de victoire pour le joueur au trait, suite principale) et carte des territoires/pierres mortes.",
              "inputSchema": {"type": "object", "properties": {
@@ -61,7 +77,7 @@ class Tools:
              "description": "Compare précisément des coups candidats (ex. le coup de l'élève et celui de l'IA) depuis la position affichée.",
              "inputSchema": {"type": "object", "properties": {"moves": {"type": "array", "items": pt}}, "required": ["moves"]}},
             {"name": "annotate",
-             "description": "Dessine sur le plateau de l'élève pour illustrer une explication : lettres (A, B, 1, 2…) et/ou formes. Les annotations s'effacent dès que la position change, donc annoter APRÈS avoir positionné le plateau.",
+             "description": "Dessine sur le plateau de l'élève pour illustrer une explication : lettres (A, B, 1, 2…) et/ou formes. Les annotations sont attachées à la position affichée (elles réapparaissent quand l'élève y revient) : annoter APRÈS avoir positionné le plateau.",
              "inputSchema": {"type": "object", "properties": {
                  "marks": {"type": "array", "items": {"type": "object", "properties": {
                      "point": pt,
@@ -103,7 +119,9 @@ class Tools:
             lines.append(f"L'élève joue {COLOR_FR[g['student']]}.")
         if s.variation:
             var = " ".join(f"{c}{to_gtp(p, s.size)}" for c, p in s.variation)
-            lines.append(f"VARIANTE en cours : après le coup {s.cursor} de la partie, on a essayé {var} (la partie réelle continuait par "
+            src = {"user": "par l'élève", "sensei": "par toi"}.get(s.nodes[s.current].source, "")
+            lines.append(f"VARIANTE en cours (position n°{s.current}, créée {src}) : après le coup {s.cursor} de la partie, on a essayé {var} "
+                         f"(la partie réelle continuait par "
                          f"{to_gtp(s.main[s.cursor][1], s.size) if s.cursor < len(s.main) else 'rien'}).")
         else:
             lines.append(f"Position de la partie réelle après le coup {n}/{len(s.main)}.")
@@ -157,22 +175,47 @@ class Tools:
 
     def t_go_to_move(self, move_number):
         self.s.goto(move_number)
+        self._shown()
         return self._position_text()
 
     def t_play_moves(self, moves):
         try:
-            played = self.s.play(moves)
+            played = self.s.play(moves, source="sensei")
         except Exception as e:
             return f"Coup refusé : {e}\n\n" + self._position_text()
+        finally:
+            self._shown()
         return f"Joué : {', '.join(played)}.\n\n" + self._position_text()
 
     def t_undo(self, count=1):
         self.s.step(-int(count))
+        self._shown()
         return self._position_text()
 
     def t_back_to_game(self):
         self.s.back_to_main()
+        self._shown()
         return self._position_text()
+
+    def t_go_to_position(self, position_id):
+        self.s.goto_node(position_id)
+        self._shown()
+        return self._position_text()
+
+    def t_list_variations(self):
+        s = self.s
+        out = []
+        for n in s.nodes.values():
+            if n.main or s.nodes[n.parent].main is False:
+                continue  # on ne liste que les débuts de variantes
+            leaf = n
+            while leaf.children:
+                leaf = s.nodes[leaf.children[0]]
+            src = {"user": "élève", "sensei": "Sensei"}.get(n.source, n.source)
+            out.append(f"- position {leaf.id} ({src}) : {s.describe_node(leaf.id)}")
+        if not out:
+            return "Aucune variante pour l'instant."
+        return "Variantes (identifiant = dernière position de la variante) :\n" + "\n".join(out)
 
     def _ownership_map(self, a):
         own = a.get("ownership")
@@ -231,6 +274,7 @@ class Tools:
 
     def t_annotate(self, marks, keep_existing=False):
         self.s.set_marks(marks, replace=not keep_existing)
+        self._shown()
         return f"{len(marks)} annotation(s) affichée(s) sur le plateau de l'élève."
 
     def t_clear_annotations(self):

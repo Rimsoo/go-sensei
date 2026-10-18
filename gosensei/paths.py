@@ -17,6 +17,7 @@ CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
 
 LOG_DIR = os.path.join(DATA_DIR, "logs")
 REVIEW_DIR = os.path.join(DATA_DIR, "reviews")
+TREE_DIR = os.path.join(DATA_DIR, "trees")  # variantes et annotations, par partie
 OGS_DIR = os.path.join(DATA_DIR, "ogs")
 IMPORT_DIR = os.path.join(DATA_DIR, "imported")
 COACH_DIR = os.path.join(DATA_DIR, "coach")
@@ -37,7 +38,7 @@ def bundled_katago_dir():
 
 
 def ensure_dirs():
-    for d in (CONFIG_DIR, DATA_DIR, LOG_DIR, REVIEW_DIR, OGS_DIR, IMPORT_DIR, COACH_DIR, KATAGO_DIR):
+    for d in (CONFIG_DIR, DATA_DIR, LOG_DIR, REVIEW_DIR, TREE_DIR, OGS_DIR, IMPORT_DIR, COACH_DIR, KATAGO_DIR):
         os.makedirs(d, exist_ok=True)
 
 

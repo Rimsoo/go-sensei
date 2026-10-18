@@ -44,20 +44,26 @@ navigateur par défaut. **Fermer la fenêtre ou cliquer sur ⏻ arrête tout** :
   - le coup réellement joué est entouré ;
   - une carte des territoires montre aussi les pierres mortes ;
   - tu peux jouer des variantes en cliquant.
+- **Arbre des coups** :
+  - chaque variante que tu joues (clic sur le plateau) ou que Sensei montre devient une branche, sauvegardée avec la partie et ses annotations ;
+  - KataGo évalue chaque coup des variantes, et le graphique trace la variante affichée en orange par-dessus la partie ;
+  - clic sur un nœud pour y aller, ↑/↓ pour passer d'une variante à l'autre, clic droit pour supprimer une variante.
 - **Professeur IA (optionnel)**, au choix dans ⚙ Réglages :
   - **Claude Code** : abonnement Claude, sans clé d'API, si la commande `claude` est installée ;
   - **API Anthropic** (Claude) : clé d'API ;
   - **compatible OpenAI** : OpenAI, DeepSeek, Mistral, Gemini, OpenRouter, ou **Ollama** en local et gratuit
     (avec un modèle qui gère les outils, ex. `qwen3`).
 
-  L'IA n'a accès qu'au plateau : aucun shell, aucun fichier. Elle tient un carnet de tes progrès d'une séance
-  à l'autre.
+  L'IA n'a accès qu'au plateau : aucun shell, aucun fichier. Chacun de ses messages garde des liens vers les
+  positions et variantes qu'elle a montrées : un clic te ramène à son explication. Elle tient aussi un carnet
+  de tes progrès d'une séance à l'autre.
 
 ## Raccourcis
 
 | Touche | Action |
 |---|---|
 | ← / → | coup précédent / suivant (Maj = 5 coups) ; la molette sur le plateau marche aussi |
+| ↑ / ↓ | variante précédente / suivante au même coup |
 | Origine / Fin | début / fin de partie |
 | Échap | revenir à la partie (ou fermer une fenêtre) |
 | Entrée | envoyer le message (Maj+Entrée = nouvelle ligne) |

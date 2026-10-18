@@ -75,6 +75,7 @@ class App:
         self.lib = Library(self.cfg, log)
         self.study = Study(self.lib, self.engine, self.cfg, self.hub.send, log)
         self.tools = Tools(self.study, paths.NOTES_FILE)
+        self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
         self.window = None
         self.server = None
@@ -179,6 +180,12 @@ class App:
             s.step(int(body["k"]))
         elif path == "/api/main":
             s.back_to_main()
+        elif path == "/api/goto-node":
+            s.goto_node(body["id"])
+        elif path == "/api/sibling":
+            s.sibling(int(body["d"]))
+        elif path == "/api/delete-node":
+            s.delete_node(body["id"])
         elif path == "/api/play":
             s.play([body["move"]])
         elif path == "/api/clear-marks":
