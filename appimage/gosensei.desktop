@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+# Pas d'espace dans Name : python-appimage en fait le nom du fichier AppImage.
+Name=GoSensei
+GenericName=Analyse de parties de Go
+Comment=Plateau d'analyse KataGo et professeur IA pour apprendre le Go
+Exec=gosensei
+Icon=gosensei
+Categories=Game;BoardGame;Education;
+Terminal=false
+StartupNotify=true
+StartupWMClass=GoSensei

@@ -1,0 +1,14 @@
+# Construction
+.build-venv/
+.build-cache/
+build/
+*.egg-info/
+*.AppImage
+__pycache__/
+*.pyc
+
+# Données de l'ancienne version (désormais dans ~/.local/share/go-sensei)
+data/
+logs/
+config.json
+tmp/
