@@ -456,11 +456,24 @@ class OpenAICoach(ApiCoach):
     def describe_error(self, e):
         if isinstance(e, urllib.error.HTTPError):
             try:
-                detail = e.read().decode()[:300]
+                raw = e.read().decode("utf-8", "replace")
             except Exception:
-                detail = ""
+                raw = ""
+            detail = raw[:300]
+            try:  # format habituel : {"error": {"message": "..."}}
+                err = json.loads(raw).get("error")
+                detail = (err.get("message") if isinstance(err, dict) else str(err)) or detail
+            except (ValueError, AttributeError):
+                pass
+            if "support tools" in detail or "does not support tool" in detail:
+                return (f"Le modèle « {self.settings.get('model')} » ne sait pas utiliser les outils du plateau. "
+                        "Choisis-en un autre dans ⚙ Réglages (ex. qwen3, llama3.1, mistral-small).")
             if e.code in (401, 403):
                 return f"Clé d'API refusée ({e.code}) : vérifie-la dans ⚙ Réglages."
+            if e.code == 402:
+                return f"Le service refuse la requête faute de crédit sur ton compte ({detail})."
+            if e.code == 429:
+                return "Limite de requêtes atteinte, réessaie dans un instant."
             return f"Erreur de l'API ({e.code}) : {detail}"
         if isinstance(e, urllib.error.URLError):
             return f"Impossible de joindre {self.base_url} ({e.reason}). Pour Ollama, vérifie qu'il est lancé."

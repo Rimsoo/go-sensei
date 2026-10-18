@@ -161,14 +161,6 @@ button { font: inherit; color: inherit; }
 
 .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: #3a2422; border: 1px solid var(--danger); color: #ffd7d3; padding: 10px 16px; border-radius: 10px; z-index: 20; max-width: 80vw; }
 
-@media (max-width: 1100px) {
-  body { overflow: auto; }
-  .layout { grid-template-columns: 1fr; }
-  .board-wrap { height: min(92vw, 70vh); flex: none; }
-  .chat { min-height: 70vh; }
-  .evalbar { width: 140px; }
-}
-
 /* ---------------------------------------------------------- v0.2 */
 .btn.quit:hover { background: #6b2b28; border-color: var(--danger); }
 .board-wrap { position: relative; }
@@ -204,3 +196,19 @@ button { font: inherit; color: inherit; }
 .drop { background: #15171ccc; border: 3px dashed var(--accent); font-size: 22px; font-weight: 600; pointer-events: none; }
 .logo.big { width: 64px; height: 64px; margin: 0 auto 18px; box-shadow: 30px 18px 0 -6px #eee; }
 .chat-disabled { margin: auto; text-align: center; color: var(--muted); max-width: 420px; }
+
+.brand, .pill, .toggle, .btn { white-space: nowrap; }
+
+/* ---------------------------------------------------------- fenêtre étroite (une colonne, la page défile) */
+@media (max-width: 1100px) {
+  body { overflow-y: auto; }
+  .topbar { flex-wrap: wrap; gap: 8px 12px; }
+  .game-title { display: none; }
+  .layout { flex: none; grid-template-columns: 1fr; }
+  .board-col, .side { min-height: auto; }
+  .board-wrap { flex: none; }
+  #board { width: min(100%, 72vh); height: auto; }
+  .analysis { max-height: none; }
+  .chat { min-height: 70vh; }
+  .evalbar { width: 140px; }
+}

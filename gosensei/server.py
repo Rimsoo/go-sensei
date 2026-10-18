@@ -359,7 +359,9 @@ def run(open_window=None, port=None):
         app.stopping = True
         app.coach.shutdown()
         app.engine.stop()
-        try:
-            os.remove(paths.PID_FILE)
+        try:  # ne supprimer que notre propre fichier (une autre instance a pu l'écrire)
+            with open(paths.PID_FILE) as f:
+                if f.read().strip() == str(os.getpid()):
+                    os.remove(paths.PID_FILE)
         except OSError:
             pass
