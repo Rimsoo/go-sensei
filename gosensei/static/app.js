@@ -300,9 +300,7 @@ function renderInfo() {
       d.className = "an-move";
       d.innerHTML = `<span class="dot" style="background:${lossColor(best - sc2)}"></span><span class="mv">${mv.move}</span><span class="sc">${fmt(sc2)} · ${(pov(mv.winrate - 0.5, c) * 100 + 50).toFixed(0)}%</span>`;
       d.title = "Survol : voir la suite · Clic : jouer ce coup";
-      d.onmouseenter = () => { if (!preview || preview.key !== mv.move) { preview = { key: mv.move, color: c, moves: mv.pv }; queueRender(); } };
-      d.onmouseleave = () => { preview = null; queueRender(); };
-      d.onclick = () => { preview = null; post("/api/play", { move: mv.move }).catch(() => {}); };
+      d.dataset.move = mv.move; // survol et clic gérés par délégation sur #an-moves (voir plus bas)
       list.appendChild(d);
     });
   }
@@ -570,6 +568,27 @@ function renderChat() {
   $("#btn-send").classList.toggle("hidden", busy);
   $("#btn-stop").classList.toggle("hidden", !busy);
 }
+
+// Aperçu de la suite d'un coup suggéré. La liste est reconstruite à chaque mise à jour de
+// l'analyse : on écoute son conteneur (permanent), sinon la sortie de la souris serait perdue
+// et l'aperçu resterait affiché.
+function setPreview(next) {
+  const same = (preview && preview.key) === (next && next.key);
+  if (!same) { preview = next; queueRender(); }
+}
+$("#an-moves").addEventListener("mouseover", (e) => {
+  const d = e.target.closest(".an-move");
+  const a = S && S.analysis;
+  const mv = d && a && a.moves.find((m) => m.move === d.dataset.move);
+  setPreview(mv ? { key: `${S.current}:${mv.move}`, color: a.toPlay, moves: mv.pv } : null);
+});
+$("#an-moves").addEventListener("mouseleave", () => setPreview(null));
+$("#an-moves").addEventListener("click", (e) => {
+  const d = e.target.closest(".an-move");
+  if (!d) return;
+  setPreview(null);
+  post("/api/play", { move: d.dataset.move }).catch(() => {});
+});
 
 $("#messages").addEventListener("click", (e) => {
   const b = e.target.closest(".node-link");
@@ -894,6 +913,7 @@ function connect() {
   es.addEventListener("state", (e) => {
     const prev = S && S.current;
     S = JSON.parse(e.data);
+    if (prev !== S.current) preview = null; // l'aperçu concerne l'ancienne position
     queueRender();
     if (prev !== S.current) renderChat(); // met à jour le lien de position actif
   });
