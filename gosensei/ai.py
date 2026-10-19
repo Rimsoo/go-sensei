@@ -52,15 +52,30 @@ ANTHROPIC_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 MAX_TOOL_ROUNDS = 25
 
 
+def key_slot(ai_cfg):
+    """Emplacement de la clé d'API : une clé par service, jamais envoyée à un autre."""
+    provider = ai_cfg.get("provider")
+    if provider == "anthropic":
+        return "anthropic"
+    if provider == "openai":
+        return ai_cfg.get("preset") or "custom"
+    return None
+
+
 class Coach:
-    """Base commune : historique affiché, état occupé, diffusion des événements."""
+    """Base commune : une conversation par partie (historique affiché + état propre au
+    fournisseur), état occupé, diffusion des événements au navigateur."""
 
     def __init__(self, broadcast, log):
         self.broadcast = broadcast
         self.log = log
         self.lock = threading.Lock()
         self.busy = False
-        self.history = []  # [{role, text, tools}] pour l'affichage
+        self.game_id = None
+        self.store = {}  # id de partie -> {"history": [...], "state": {...}}
+        self.history = []  # [{role, text, tools, nodes}] pour l'affichage
+        self.turn = None  # message de l'IA en cours d'écriture
+        self.turn_game = None
         self._load()
 
     # ------------------------------------------------------------ persistance
@@ -68,10 +83,12 @@ class Coach:
         try:
             with open(paths.CHAT_FILE, encoding="utf-8") as f:
                 st = json.load(f)
-            self.history = st.get("history", [])
-            self.restore(st)
         except (OSError, json.JSONDecodeError):
-            pass
+            return
+        if "games" in st:
+            self.store = st["games"]
+        elif st.get("history"):  # ancien format : une seule conversation
+            self.store = {"": {"history": st["history"], "state": {}}}
 
     def restore(self, state):
         pass
@@ -79,30 +96,63 @@ class Coach:
     def extra_state(self):
         return {}
 
+    def _snapshot(self):
+        if self.game_id is not None:
+            self.store[self.game_id] = {"history": self.history[-200:], "state": self.extra_state()}
+
     def _save(self):
-        with open(paths.CHAT_FILE, "w", encoding="utf-8") as f:
-            json.dump(dict(self.extra_state(), history=self.history[-200:]), f, ensure_ascii=False)
+        self._snapshot()
+        try:
+            with open(paths.CHAT_FILE, "w", encoding="utf-8") as f:
+                json.dump({"games": self.store}, f, ensure_ascii=False)
+        except OSError as e:
+            self.log(f"IA : sauvegarde du chat impossible ({e})")
+
+    def set_game(self, gid):
+        """Change de conversation quand l'élève ouvre une autre partie."""
+        if gid == self.game_id:
+            return
+        if self.busy:
+            self.stop()
+        with self.lock:
+            self._snapshot()
+            self.game_id = gid
+            conv = self.store.get(gid, {})
+            self.history = conv.get("history", [])
+            self.clear_conversation()
+            self.restore(conv.get("state", {}))
+            self.busy = False
+        self._save()
+        self.broadcast("chat", {"kind": "reload"})
 
     # ------------------------------------------------------------ événements
     def _current(self):
+        if self.turn is not None:
+            return self.turn
         if not self.history or self.history[-1]["role"] != "assistant":
             self.history.append({"role": "assistant", "text": "", "tools": []})
         return self.history[-1]
 
+    def _visible(self):
+        """Les événements d'une réponse ne sont affichés que si sa partie est toujours ouverte."""
+        return self.turn is None or self.turn_game == self.game_id
+
     def emit_text(self, txt):
         self._current()["text"] += txt
-        self.broadcast("chat", {"kind": "delta", "text": txt})
+        if self._visible():
+            self.broadcast("chat", {"kind": "delta", "text": txt})
 
     def emit_tool(self, name):
         cur = self._current()
         cur["tools"].append(name)
         if cur["text"] and not cur["text"].endswith("\n\n"):
             self.emit_text("\n\n")
-        self.broadcast("chat", {"kind": "tool", "name": name})
+        if self._visible():
+            self.broadcast("chat", {"kind": "tool", "name": name})
 
     def attach_node(self, nid, label):
         """Rattache au message en cours une position que l'IA a montrée (lien cliquable)."""
-        if not self.busy:
+        if not self.busy or not self._visible():
             return
         nodes = self._current().setdefault("nodes", [])
         if nodes and nodes[-1]["id"] == nid:
@@ -114,20 +164,25 @@ class Coach:
     def finish(self, error=None):
         if error:
             self.emit_text(f"\n\n⚠️ {error}")
-        self.busy = False
+        visible = self._visible()
+        self.turn = None
+        if visible:
+            self.busy = False
+            self.broadcast("chat", {"kind": "done"})
         self._save()
-        self.broadcast("chat", {"kind": "done"})
 
     def begin(self, text):
         if self.busy:
             raise RuntimeError("Sensei est déjà en train de répondre")
         self.busy = True
         self.history.append({"role": "user", "text": text})
-        self.history.append({"role": "assistant", "text": "", "tools": []})
+        self.turn = {"role": "assistant", "text": "", "tools": []}
+        self.turn_game = self.game_id
+        self.history.append(self.turn)
         self.broadcast("chat", {"kind": "start"})
 
     # ------------------------------------------------------------ interface
-    def send(self, text, context):
+    def send(self, text, context, rich_context=None):
         raise NotImplementedError
 
     def stop(self):
@@ -137,6 +192,8 @@ class Coach:
         self.stop()
         with self.lock:
             self.history = []
+            self.turn = None
+            self.busy = False
             self.clear_conversation()
             self._save()
         self.broadcast("chat", {"kind": "reset"})
@@ -149,7 +206,7 @@ class Coach:
 
 
 class NoCoach(Coach):
-    def send(self, text, context):
+    def send(self, text, context, rich_context=None):
         raise RuntimeError("Aucune IA n'est configurée : ouvre ⚙ Réglages pour en choisir une (optionnel).")
 
 
@@ -173,6 +230,10 @@ class ClaudeCodeCoach(Coach):
 
     def clear_conversation(self):
         self.session_id = None
+        # La session dépend de la partie : on relancera claude avec la bonne (--resume).
+        if self.proc and self.proc.poll() is None:
+            self.proc.kill()
+        self.proc = None
 
     def _spawn(self):
         cfg = os.path.join(paths.COACH_DIR, "mcp.json")
@@ -199,12 +260,13 @@ class ClaudeCodeCoach(Coach):
                 self.log(f"Claude Code : {line.strip()[:300]}")
 
     def _read(self, proc):
+        game = self.game_id
         for line in proc.stdout:
             try:
                 ev = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if ev.get("session_id"):
+            if ev.get("session_id") and game == self.game_id:
                 self.session_id = ev["session_id"]
             t = ev.get("type")
             if t == "stream_event":
@@ -218,7 +280,7 @@ class ClaudeCodeCoach(Coach):
         if self.busy:
             self.finish("Claude Code s'est arrêté. Réessaie ton message.")
 
-    def send(self, text, context):
+    def send(self, text, context, rich_context=None):
         with self.lock:
             self.begin(text)
             if not self.proc or self.proc.poll() is not None:
@@ -257,7 +319,21 @@ class ApiCoach(Coach):
             self.messages = state.get("api_messages", [])
 
     def extra_state(self):
-        return {"api_provider": self.provider_id(), "api_messages": self.messages[-120:]}
+        return {"api_provider": self.provider_id(), "api_messages": self._safe_tail(self.messages, 120)}
+
+    @staticmethod
+    def _safe_tail(msgs, n):
+        """Derniers messages, en commençant par une vraie question (jamais au milieu d'un
+        appel d'outil, ce que les API refusent)."""
+        system = msgs[:1] if msgs and msgs[0]["role"] == "system" else []
+        tail = msgs[len(system):][-n:]
+        for i, m in enumerate(tail):
+            c = m.get("content")
+            is_question = m["role"] == "user" and (
+                isinstance(c, str) or (isinstance(c, list) and c and c[0].get("type") == "text"))
+            if is_question:
+                return system + tail[i:]
+        return system
 
     def clear_conversation(self):
         self.messages = []
@@ -280,19 +356,25 @@ class ApiCoach(Coach):
         except Exception as e:
             return f"Erreur : {e}", True
 
-    def send(self, text, context):
+    def compose(self, text, context, rich_context):
+        return f"[Plateau : {context}]\n{text}"
+
+    def send(self, text, context, rich_context=None):
         with self.lock:
             self.begin(text)
             self.cancel.clear()
-        threading.Thread(target=self._run, args=(f"[Plateau : {context}]\n{text}",), daemon=True).start()
+        content = self.compose(text, context, rich_context)
+        threading.Thread(target=self._run, args=(content, self.messages), daemon=True).start()
 
-    def _run(self, content):
+    def _run(self, content, msgs):
+        # msgs : l'historique de la partie au moment de la question (si l'élève change de
+        # partie pendant la réponse, on n'écrit pas dans la conversation de l'autre partie).
         try:
-            self.user_turn(content)
+            self.user_turn(msgs, content)
             for _ in range(MAX_TOOL_ROUNDS):
                 if self.cancel.is_set():
                     return self.finish("(interrompu)")
-                if not self.assistant_turn():
+                if not self.assistant_turn(msgs):
                     break
             self.finish("(interrompu)" if self.cancel.is_set() else None)
         except Exception as e:
@@ -306,7 +388,7 @@ class ApiCoach(Coach):
     def stop(self):
         self.cancel.set()
 
-    # À implémenter : user_turn(content) et assistant_turn() -> True s'il faut continuer (outils appelés)
+    # À implémenter : user_turn(msgs, content) et assistant_turn(msgs) -> True s'il faut continuer (outils appelés)
 
 
 class AnthropicCoach(ApiCoach):
@@ -321,16 +403,16 @@ class AnthropicCoach(ApiCoach):
         self.tool_defs = [{"name": d["name"], "description": d["description"], "input_schema": d["inputSchema"],
                            "eager_input_streaming": True} for d in tools.definitions()]
 
-    def user_turn(self, content):
-        last = self.messages[-1] if self.messages else None
+    def user_turn(self, msgs, content):
+        last = msgs[-1] if msgs else None
         if last and last["role"] == "user":  # tour précédent interrompu : on fusionne
             if isinstance(last["content"], str):
                 last["content"] = [{"type": "text", "text": last["content"]}]
             last["content"].append({"type": "text", "text": content})
         else:
-            self.messages.append({"role": "user", "content": content})
+            msgs.append({"role": "user", "content": content})
 
-    def assistant_turn(self):
+    def assistant_turn(self, msgs):
         json_retries = 0
         while True:
             try:
@@ -339,7 +421,7 @@ class AnthropicCoach(ApiCoach):
                     max_tokens=64000,
                     system=COACH_PROMPT,
                     tools=self.tool_defs,
-                    messages=self.messages,
+                    messages=msgs,
                     thinking={"type": "adaptive"},
                     output_config={"effort": "medium"},
                     betas=["server-side-fallback-2026-07-01"],
@@ -359,7 +441,7 @@ class AnthropicCoach(ApiCoach):
                 if json_retries > 2:
                     raise
         content = [b.model_dump(exclude_none=True) for b in response.content]
-        self.messages.append({"role": "assistant", "content": content})
+        msgs.append({"role": "assistant", "content": content})
         if response.stop_reason == "pause_turn":
             return True
         tool_uses = [b for b in response.content if b.type == "tool_use"]
@@ -374,7 +456,7 @@ class AnthropicCoach(ApiCoach):
         for b in tool_uses:
             out, err = self.run_tool(b.name, b.input)
             results.append({"type": "tool_result", "tool_use_id": b.id, "content": out, "is_error": err})
-        self.messages.append({"role": "user", "content": results})
+        msgs.append({"role": "user", "content": results})
         return True
 
     def describe_error(self, e):
@@ -404,21 +486,57 @@ class OpenAICoach(ApiCoach):
                                                             "parameters": d["inputSchema"]}}
                           for d in tools.definitions()]
 
-    def user_turn(self, content):
-        if not self.messages:
-            self.messages.append({"role": "system", "content": COACH_PROMPT})
-        self.messages.append({"role": "user", "content": content})
+    QUESTION = "[Question de l'élève]\n"
+
+    def compose(self, text, context, rich_context):
+        # Les modèles locaux appellent rarement get_position d'eux-mêmes : on leur donne
+        # directement la position réelle (plateau, dernier coup, KataGo) avec la question.
+        if not rich_context:
+            return super().compose(text, context, rich_context)
+        return (f"[Plateau : {context}]\n[Position affichée à l'élève, à jour — c'est d'ELLE qu'il parle]\n"
+                f"{rich_context}\n\n{self.QUESTION}{text}")
+
+    def user_turn(self, msgs, content):
+        if not msgs:
+            msgs.append({"role": "system", "content": COACH_PROMPT})
+        msgs.append({"role": "user", "content": content})
+
+    def _request_messages(self, msgs):
+        """Copie allégée de l'historique : seule la dernière question garde la position
+        complète, et on ne garde que les échanges récents (budget en caractères)."""
+        last_user = max((i for i, m in enumerate(msgs) if m["role"] == "user"), default=-1)
+        out = []
+        for i, m in enumerate(msgs):
+            c = m.get("content")
+            if m["role"] == "user" and i != last_user and isinstance(c, str) and self.QUESTION in c:
+                m = dict(m, content=c.split("\n", 1)[0] + "\n" + c.split(self.QUESTION, 1)[1])
+            out.append(m)
+        budget = 30_000 if self.settings.get("preset") == "ollama" else 150_000
+        system = out[:1] if out and out[0]["role"] == "system" else []
+        rest = out[len(system):]
+        while len(json.dumps(rest, ensure_ascii=False)) > budget:
+            # On retire le plus ancien échange complet (jusqu'à la question suivante).
+            nxt = next((i for i, m in enumerate(rest) if i > 0 and m["role"] == "user" and isinstance(m.get("content"), str)), None)
+            if nxt is None:
+                break
+            rest = rest[nxt:]
+        return system + rest
 
     def _request(self, body):
         headers = {"Content-Type": "application/json", "Accept": "text/event-stream"}
-        if self.settings.get("api_key"):
+        if self.settings.get("api_key") and self._sends_key():
             headers["Authorization"] = f"Bearer {self.settings['api_key']}"
         req = urllib.request.Request(f"{self.base_url}/chat/completions", data=json.dumps(body).encode(),
                                      headers=headers, method="POST")
         return urllib.request.urlopen(req, timeout=300)
 
-    def assistant_turn(self):
-        body = {"model": self.settings["model"], "messages": self.messages, "tools": self.tool_defs, "stream": True}
+    def _sends_key(self):
+        preset = OPENAI_PRESETS.get(self.settings.get("preset") or "custom", OPENAI_PRESETS["custom"])
+        return preset["key"] or (self.settings.get("preset") or "custom") == "custom"
+
+    def assistant_turn(self, msgs):
+        body = {"model": self.settings["model"], "messages": self._request_messages(msgs), "tools": self.tool_defs,
+                "stream": True}
         text, calls = "", {}
         with self._request(body) as r:
             for raw in r:
@@ -452,7 +570,7 @@ class OpenAICoach(ApiCoach):
             msg["tool_calls"] = [{"id": c["id"] or f"call_{i}", "type": "function",
                                   "function": {"name": c["name"], "arguments": c["args"] or "{}"}}
                                  for i, c in sorted(calls.items())]
-        self.messages.append(msg)
+        msgs.append(msg)
         if not calls:
             return False
         for tc in msg["tool_calls"]:
@@ -462,7 +580,7 @@ class OpenAICoach(ApiCoach):
                 out, err = "Arguments JSON invalides, réessaie.", True
             else:
                 out, err = self.run_tool(tc["function"]["name"], args)
-            self.messages.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
+            msgs.append({"role": "tool", "tool_call_id": tc["id"], "content": out})
         return True
 
     def describe_error(self, e):
@@ -512,6 +630,7 @@ def list_models(settings):
 
 def make_coach(ai_cfg, broadcast, log, tools, mcp_url):
     provider = ai_cfg.get("provider") or "none"
+    ai_cfg = dict(ai_cfg, api_key=(ai_cfg.get("api_keys") or {}).get(key_slot(ai_cfg) or "", ""))
     try:
         if provider == "claude-code":
             if not shutil.which("claude"):

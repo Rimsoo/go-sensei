@@ -76,6 +76,8 @@ class App:
         self.study = Study(self.lib, self.engine, self.cfg, self.hub.send, log)
         self.tools = Tools(self.study, paths.NOTES_FILE)
         self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
+        # Une conversation par partie : on suit la partie ouverte.
+        self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
         self.window = None
         self.server = None
@@ -136,6 +138,54 @@ class App:
         txt += f"au trait : {'Noir' if s.to_play() == 'B' else 'Blanc'}"
         return txt
 
+    def rich_context(self):
+        """Position complète pour les modèles qui ne vont pas la chercher eux-mêmes : d'abord
+        des faits clairs calculés par KataGo, puis le plateau."""
+        s = self.study
+        if not s.game:
+            return None
+        fr = {"B": "Noir", "W": "Blanc"}
+        try:
+            g = s.game
+            facts = [f"- Partie : {g['black']} (Noir) contre {g['white']} (Blanc), {g['size']}x{g['size']}."]
+            if g.get("student"):
+                facts.append(f"- L'élève joue {fr[g['student']]}.")
+            facts.append(f"- Position affichée : {s.describe_node()} (coup {len(s.moves())} sur {len(s.main)} dans la partie).")
+            lm = s.last_move_facts()
+            if lm:
+                line = f"- Dernier coup joué : {fr[lm['color']]} en {lm['move']} (coup n°{lm['number']})."
+                if lm["loss"] is not None:
+                    if lm["level"]:
+                        line += f" C'est une {lm['level']} : il a coûté environ {lm['loss']} points à {fr[lm['color']]}."
+                    else:
+                        line += f" C'est un bon coup (perte {max(lm['loss'], 0):.1f} point)."
+                if lm["best"] and lm["best"] != lm["move"]:
+                    line += (f" Le meilleur coup à la place était {lm['best']}"
+                             f" (suite prévue : {' '.join(lm['best_pv'])}).")
+                facts.append(line)
+            a = s.analyses.get(s.key())
+            if a and a.get("score") is not None:
+                lead = a["score"]
+                who = "Noir" if lead > 0 else "Blanc"
+                facts.append(f"- Score actuel : {who} mène d'environ {abs(lead):.1f} points.")
+            if a and a.get("moves"):
+                color = a["toPlay"]
+                sign = 1 if color == "B" else -1
+                best = a["moves"][0]["score"]
+                cands = ", ".join(f"{m['move']} (perte {sign * (best - m['score']):.1f})" for m in a["moves"][:4])
+                facts.append(f"- Au trait : {fr[color]}. Meilleurs coups selon KataGo : {cands}. "
+                             f"Suite prévue après {a['moves'][0]['move']} : {' '.join(a['moves'][0]['pv'][:6])}.")
+            mine = [m for m in s.mistakes() if m["level"] and (not g.get("student") or m["color"] == g["student"])]
+            if mine:
+                facts.append("- Plus grosses erreurs de l'élève dans la partie : " + ", ".join(
+                    f"coup {m['move_number']} {m['played']} (-{m['loss']})" for m in sorted(mine, key=lambda m: -m["loss"])[:5]) + ".")
+            return ("FAITS FIABLES (calculés par KataGo) — base-toi dessus et ne cite pas d'autres coups "
+                    "sans les vérifier avec tes outils :\n" + "\n".join(facts)
+                    + "\n\nDétail de la position (pour référence) :\n" + self.tools._position_text())
+        except Exception as e:
+            log(f"Contexte : {e!r}")
+            return None
+
     def chat_info(self):
         provider = self.cfg["ai"]["provider"]
         return {"history": self.coach.history, "busy": self.coach.busy, "provider": provider,
@@ -148,20 +198,32 @@ class App:
                 "paths": {"config": paths.CONFIG_FILE, "data": paths.DATA_DIR}}
 
     def apply_config(self, patch):
+        from .ai import key_slot
         ai_patch = patch.get("ai")
-        if ai_patch is not None and not ai_patch.get("api_key"):
-            ai_patch.pop("api_key", None)  # champ vide = garder la clé enregistrée
-            if ai_patch.get("clear_api_key"):
-                ai_patch["api_key"] = ""
         if ai_patch is not None:
-            ai_patch.pop("clear_api_key", None)
-            ai_patch.pop("has_api_key", None)
+            new_key = (ai_patch.pop("api_key", "") or "").strip()
+            clear = ai_patch.pop("clear_api_key", False)
+            for k in ("has_api_key", "key_slots", "api_keys"):
+                ai_patch.pop(k, None)
+            slot = key_slot(dict(self.cfg["ai"], **ai_patch))
+            if slot and (new_key or clear):
+                keys = dict(self.cfg["ai"].get("api_keys") or {})
+                if new_key:
+                    keys[slot] = new_key  # la clé ne sert qu'à ce service
+                else:
+                    keys.pop(slot, None)
+                ai_patch["api_keys"] = keys
         patch.pop("detected", None)
         old_katago = dict(self.cfg["katago"])
+        if ai_patch is not None and "api_keys" in ai_patch:
+            # _merge fusionne les dictionnaires : on remplace explicitement celui des clés
+            self.cfg.data["ai"]["api_keys"] = ai_patch.pop("api_keys")
         self.cfg.update(patch)
         if ai_patch is not None:
             self.coach.shutdown()
             self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
+            if self.study.game:
+                self.coach.set_game(self.study.game["id"])
             self.hub.send("chat", {"kind": "reload"})
         if self.cfg["katago"] != old_katago:
             self.engine.restart()
@@ -201,7 +263,7 @@ class App:
                 self.lib._cache.clear()
             return dict(res, games=self.lib.list())
         elif path == "/api/chat":
-            self.coach.send(body["text"], self.context())
+            self.coach.send(body["text"], self.context(), self.rich_context())
         elif path == "/api/chat/stop":
             self.coach.stop()
         elif path == "/api/chat/reset":
@@ -210,6 +272,8 @@ class App:
             return self.apply_config(body)
         elif path == "/api/ai/models":
             settings = dict(self.cfg["ai"], **{k: v for k, v in body.items() if v})
+            if not body.get("api_key"):
+                settings["api_key"] = (self.cfg["ai"].get("api_keys") or {}).get(ai.key_slot(settings) or "", "")
             return {"models": ai.list_models(settings)}
         elif path == "/api/engine/install":
             self.engine.install()

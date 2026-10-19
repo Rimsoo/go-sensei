@@ -27,7 +27,8 @@ DEFAULTS = {
         "provider": "none",     # none | claude-code | anthropic | openai
         "preset": "",           # pour openai : openai, deepseek, ollama, openrouter, mistral, gemini, custom
         "model": "",
-        "api_key": "",
+        "api_key": "",          # obsolète : remplacé par api_keys (une clé par service)
+        "api_keys": {},         # "anthropic", "openai", "deepseek", "mistral"… -> clé
         "base_url": "",
     },
 }
@@ -82,7 +83,18 @@ class Config:
         self.data = _merge(DEFAULTS, data)
         if first_run:
             self._first_run()
+        self._migrate_api_key()
         self.save()
+
+    def _migrate_api_key(self):
+        """Ancienne clé unique -> clé du service actuellement choisi."""
+        from .ai import key_slot
+        ai = self.data["ai"]
+        if ai.get("api_key"):
+            slot = key_slot(ai)
+            if slot:
+                ai["api_keys"].setdefault(slot, ai["api_key"])
+            ai["api_key"] = ""
 
     def _first_run(self):
         # Claude Code installé : on l'active par défaut, sinon l'IA reste désactivée.
@@ -112,10 +124,12 @@ class Config:
 
     def public(self):
         """Configuration envoyée au navigateur (clé d'API masquée)."""
+        from .ai import key_slot
         d = copy.deepcopy(self.data)
-        key = d["ai"].get("api_key") or ""
+        keys = d["ai"].pop("api_keys", {}) or {}
         d["ai"]["api_key"] = ""
-        d["ai"]["has_api_key"] = bool(key)
+        d["ai"]["has_api_key"] = bool(keys.get(key_slot(d["ai"]) or ""))
+        d["ai"]["key_slots"] = sorted(k for k, v in keys.items() if v)  # services ayant une clé
         d["detected"] = {"conquest": detect_conquest(), "claude_cli": bool(shutil.which("claude"))}
         return d
 

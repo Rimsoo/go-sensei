@@ -66,6 +66,7 @@ class Study:
         self.live_qid = None
         self.line_qid = None
         self.review = None
+        self.on_load = None  # rappel(id de partie) quand une partie est ouverte
 
     def on_cpu(self):
         return self.engine.state.get("backend") in ("eigen", "eigenavx2")
@@ -230,6 +231,8 @@ class Study:
             self.node_evals = {}
             self.review = None
         self.start_review()
+        if self.on_load:
+            self.on_load(g["id"])
         self.changed()
         return g
 
@@ -580,6 +583,39 @@ class Study:
                         "winrate_loss": round(wr_loss * 100, 1), "best": a["best"],
                         "best_pv": a["pv"], "level": level if played != a["best"] else None})
         return out
+
+    def _eval_of(self, nid):
+        """Score (Noir) et meilleur coup d'une position, d'après ce qui est déjà calculé."""
+        moves = self.moves_of(nid)
+        depth = len(moves)
+        score, best, pv = None, None, []
+        if self.nodes[nid].main and self.review and depth in self.review["turns"]:
+            t = self.review["turns"][depth]
+            score, best, pv = t["score"], t["best"], t["pv"]
+        a = self.analyses.get(self.key(moves))
+        if a and a.get("moves"):
+            best, pv = a["moves"][0]["move"], a["moves"][0]["pv"]
+            score = a["score"] if a["score"] is not None else score
+        if score is None:
+            ev = self.node_evals.get(self.key(moves))
+            score = ev["score"] if ev else None
+        return score, best, pv
+
+    def last_move_facts(self):
+        """Ce que KataGo dit du dernier coup joué dans la position affichée."""
+        node = self.nodes[self.current]
+        if node.move is None:
+            return None
+        color, pt = node.move
+        before, best, pv = self._eval_of(node.parent)
+        after, _, _ = self._eval_of(node.id)
+        facts = {"color": color, "move": to_gtp(pt, self.size), "number": len(self.moves_of()),
+                 "best": best, "best_pv": pv[:6], "loss": None, "level": None}
+        if before is not None and after is not None:
+            loss = (before - after) * (1 if color == "B" else -1)
+            facts["loss"] = round(loss, 1)
+            facts["level"] = classify(loss) if facts["move"] != best else None
+        return facts
 
     def describe_node(self, nid=None):
         """Libellé court d'une position, ex. « coup 17 » ou « variante après le coup 16 : E8 D7 »."""

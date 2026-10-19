@@ -54,6 +54,11 @@ navigateur par défaut. **Fermer la fenêtre ou cliquer sur ⏻ arrête tout** :
   - **compatible OpenAI** : OpenAI, DeepSeek, Mistral, Gemini, OpenRouter, ou **Ollama** en local et gratuit
     (avec un modèle qui gère les outils, ex. `qwen3`).
 
+  Chaque partie a sa propre conversation. Les modèles compatibles OpenAI (dont Ollama) reçoivent avec chaque
+  question les faits calculés par KataGo sur la position affichée ; un petit modèle local reste toutefois bien moins
+  fiable que Claude pour expliquer le « pourquoi ». Chaque clé d'API n'est envoyée qu'au service pour lequel elle a
+  été saisie.
+
   L'IA n'a accès qu'au plateau : aucun shell, aucun fichier. Chacun de ses messages garde des liens vers les
   positions et variantes qu'elle a montrées : un clic te ramène à son explication. Elle tient aussi un carnet
   de tes progrès d'une séance à l'autre.

@@ -753,7 +753,7 @@ async function openSettings(tab = "ai") {
   }
   field("ai.preset").value = c.ai.preset || "openai";
   field("ai.api_key").value = "";
-  $("#key-note").textContent = c.ai.has_api_key ? "Une clé est enregistrée (laisser vide pour la garder)." : "";
+  updateKeyNote();
   const cq = c.sources.conquest;
   field("sources.conquest_mode").value = cq === "auto" ? "auto" : cq ? "path" : "off";
   field("sources.conquest_path").value = cq !== "auto" ? cq : "";
@@ -779,18 +779,28 @@ function showTab(tab) {
   document.querySelectorAll("#settings-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   document.querySelectorAll("#settings-form [data-pane]").forEach((p) => p.classList.toggle("hidden", p.dataset.pane !== tab));
 }
+function updateKeyNote() {
+  // Une clé par service : on indique si le service choisi dans le formulaire en a une.
+  const prov = field("ai.provider").value;
+  const slot = prov === "anthropic" ? "anthropic" : prov === "openai" ? (field("ai.preset").value || "custom") : null;
+  const has = slot && CFG && (CFG.config.ai.key_slots || []).includes(slot);
+  $("#key-note").textContent = has ? "Une clé est enregistrée pour ce service (laisser vide pour la garder)."
+    : slot ? "Aucune clé enregistrée pour ce service." : "";
+}
+
 function updateSettingsVisibility() {
   const prov = field("ai.provider").value;
   document.querySelectorAll("#settings-form [data-show]").forEach((el) => el.classList.toggle("hidden", !el.dataset.show.split(" ").includes(prov)));
   document.querySelector("[data-conquest-path]").classList.toggle("hidden", field("sources.conquest_mode").value !== "path");
 }
 $("#settings-tabs").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) showTab(b.dataset.tab); });
-field("ai.provider").addEventListener("change", () => { $("#model-list").innerHTML = ""; field("ai.model").value = ""; updateSettingsVisibility(); });
+field("ai.provider").addEventListener("change", () => { $("#model-list").innerHTML = ""; field("ai.model").value = ""; updateSettingsVisibility(); updateKeyNote(); });
 field("sources.conquest_mode").addEventListener("change", updateSettingsVisibility);
 field("ai.preset").addEventListener("change", () => {
   const p = CFG.presets[field("ai.preset").value];
   if (p && p.base_url) field("ai.base_url").value = p.base_url;
   field("ai.model").value = "";
+  updateKeyNote();
 });
 $("#btn-models").onclick = async () => {
   const body = { provider: field("ai.provider").value, base_url: field("ai.base_url").value, api_key: field("ai.api_key").value };
@@ -820,7 +830,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
     CFG = await post("/api/config", patch);
     $("#settings-status").textContent = "✓ Enregistré";
     field("ai.api_key").value = "";
-    $("#key-note").textContent = CFG.config.ai.has_api_key ? "Une clé est enregistrée (laisser vide pour la garder)." : "";
+    updateKeyNote();
     loadChat();
   } catch { $("#settings-status").textContent = "Échec de l'enregistrement."; }
 });
