@@ -199,6 +199,25 @@ button { font: inherit; color: inherit; }
 
 .brand, .pill, .toggle, .btn { white-space: nowrap; }
 
+/* ---------------------------------------------------------- panneau Analyse repliable */
+.card-head.clickable { cursor: pointer; user-select: none; }
+.card-head.clickable:hover { background: #ffffff08; }
+.toggle-arrow { display: inline-block; width: 14px; color: var(--muted); }
+.head-summary { margin-left: 8px; font-weight: 400; font-size: 13px; }
+.analysis:not(.collapsed) .head-summary { display: none; }
+.analysis.collapsed > :not(#an-head) { display: none; }
+.analysis.collapsed #an-head { border-bottom: none; }
+.analysis.collapsed #an-visits { display: none; }
+
+/* ---------------------------------------------------------- tableaux et séparateurs dans le chat */
+.msg .table-wrap { overflow-x: auto; margin: 6px 0 10px; }
+.msg table { border-collapse: collapse; font-size: 13.5px; min-width: 60%; }
+.msg th, .msg td { border: 1px solid var(--line); padding: 5px 9px; text-align: left; vertical-align: top;
+  overflow-wrap: normal; word-break: normal; hyphens: auto; }
+.msg th { background: #ffffff0d; font-weight: 600; }
+.msg tbody tr:nth-child(even) td { background: #ffffff05; }
+.msg hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
+
 /* ---------------------------------------------------------- arbre des coups */
 .tree-wrap { overflow: auto; max-height: 120px; min-height: 44px; }
 #tree { display: block; }

@@ -305,6 +305,15 @@ function renderInfo() {
     });
   }
 
+  // Résumé court affiché dans l'en-tête quand le panneau est replié
+  const nMine = S.review ? S.review.mistakes.filter((m) => !g.student || m.color === g.student).length : 0;
+  const lead = a && a.score != null ? a.score : null;
+  $("#an-head-summary").textContent = [
+    lead == null ? "" : Math.abs(lead) < 0.5 ? "équilibré" : `${lead > 0 ? "Noir" : "Blanc"} +${Math.abs(lead).toFixed(1)}`,
+    a && a.moves.length ? `meilleur : ${a.moves[0].move}` : "",
+    S.review ? `${nMine} erreur${nMine > 1 ? "s" : ""}` : "",
+  ].filter(Boolean).join(" · ");
+
   // Erreurs
   const box = $("#mistakes");
   box.innerHTML = "";
@@ -476,6 +485,21 @@ function render() {
   renderGraph();
 }
 
+// ------------------------------------------------------------------ panneau Analyse repliable
+let analysisCollapsed = true; // replié par défaut : plus de place pour le chat
+try { const v = localStorage.getItem("gs-analysis-collapsed"); if (v != null) analysisCollapsed = v === "1"; } catch {}
+function applyAnalysisCollapsed() {
+  $("#analysis-card").classList.toggle("collapsed", analysisCollapsed);
+  $("#an-toggle").textContent = analysisCollapsed ? "▸" : "▾";
+  $("#an-toggle").title = analysisCollapsed ? "Déplier l'analyse" : "Replier l'analyse";
+}
+$("#an-head").addEventListener("click", () => {
+  analysisCollapsed = !analysisCollapsed;
+  try { localStorage.setItem("gs-analysis-collapsed", analysisCollapsed ? "1" : "0"); } catch {}
+  applyAnalysisCollapsed();
+});
+applyAnalysisCollapsed();
+
 // ------------------------------------------------------------------ chat
 const TOOL_FR = {
   get_position: "regarde le plateau", get_game_review: "lit la revue de la partie", go_to_move: "va au coup",
@@ -491,14 +515,39 @@ function inline(s) {
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
 }
 
+const TABLE_ROW = /^\s*\|.*\|\s*$/;
+const TABLE_SEP = /^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$/;
+const tableCells = (line) => line.trim().replace(/^\|/, "").replace(/\|$/, "").split("|").map((c) => inline(c.trim()));
+
+function renderTable(rows) {
+  // rows : lignes « | a | b | » ; la 2e ligne « |---|---| » sépare l'en-tête du corps.
+  let head = null, body = rows;
+  if (rows.length > 1 && TABLE_SEP.test(rows[1])) { head = tableCells(rows[0]); body = rows.slice(2); }
+  let html = '<div class="table-wrap"><table>';
+  if (head) html += `<thead><tr>${head.map((c) => `<th>${c}</th>`).join("")}</tr></thead>`;
+  html += "<tbody>" + body.filter((r) => !TABLE_SEP.test(r))
+    .map((r) => `<tr>${tableCells(r).map((c) => `<td>${c}</td>`).join("")}</tr>`).join("") + "</tbody>";
+  return html + "</table></div>";
+}
+
 function markdown(src) {
   const lines = esc(src).split("\n");
   let html = "", list = null, para = [];
   const flushPara = () => { if (para.length) { html += `<p>${inline(para.join("<br>"))}</p>`; para = []; } };
   const closeList = () => { if (list) { html += `</${list}>`; list = null; } };
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     let m;
-    if ((m = line.match(/^\s*[-*•]\s+(.*)/))) {
+    if (TABLE_ROW.test(line)) {
+      flushPara(); closeList();
+      const rows = [];
+      while (i < lines.length && TABLE_ROW.test(lines[i])) rows.push(lines[i++]);
+      i--;
+      html += renderTable(rows);
+    } else if (/^\s*(-{3,}|\*{3,}|_{3,})\s*$/.test(line)) {
+      flushPara(); closeList();
+      html += "<hr>";
+    } else if ((m = line.match(/^\s*[-*•]\s+(.*)/))) {
       flushPara();
       if (list !== "ul") { closeList(); html += "<ul>"; list = "ul"; }
       html += `<li>${inline(m[1])}</li>`;
@@ -966,6 +1015,10 @@ async function loadChat() {
     chat = chatInfo.history;
     busy = chatInfo.busy;
     renderChat();
+    const box = $("#messages");
+    box.style.scrollBehavior = "auto"; // à l'ouverture d'une conversation : directement au dernier message
+    box.scrollTop = box.scrollHeight;
+    box.style.scrollBehavior = "";
   } catch {}
 }
 
