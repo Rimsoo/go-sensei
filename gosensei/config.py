@@ -10,7 +10,13 @@ from . import paths
 
 DEFAULTS = {
     "port": 8765,
-    "open_window": True,
+    "open_window": True,        # ouvrir l'interface au lancement
+    "launch": {
+        "mode": "browser",      # browser = navigateur par défaut ; app = fenêtre Chromium dédiée
+        "background": True,     # continuer quand la fenêtre est fermée (icône de notification)
+        "tray": True,           # icône dans la zone de notification
+        "autostart": False,     # lancer avec la session (en arrière-plan)
+    },
     "katago": {
         "backend": "auto",      # auto | gpu | cpu
         "binary": "",           # chemin d'un KataGo personnel (optionnel)
@@ -158,3 +164,33 @@ def migrate_legacy(cfg):
             cfg.data["ai"]["model"] = old_cfg["coach_model"]
     except (OSError, json.JSONDecodeError):
         pass
+
+
+AUTOSTART_FILE = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                              "autostart", "go-sensei.desktop")
+
+
+def launch_command():
+    """Commande pour relancer Go Sensei (AppImage si on en vient, sinon les sources)."""
+    import sys
+    appimage = os.environ.get("APPIMAGE")
+    if appimage:
+        return f'"{appimage}"'
+    root = os.path.dirname(paths.PKG)
+    return f'{sys.executable} "{os.path.join(root, "go-sensei.py")}"'
+
+
+def set_autostart(enabled):
+    """Démarrage avec la session : fichier .desktop dans ~/.config/autostart (norme XDG)."""
+    if not enabled:
+        try:
+            os.remove(AUTOSTART_FILE)
+        except OSError:
+            pass
+        return
+    os.makedirs(os.path.dirname(AUTOSTART_FILE), exist_ok=True)
+    with open(AUTOSTART_FILE, "w") as f:
+        f.write("[Desktop Entry]\nType=Application\nName=Go Sensei\n"
+                "Comment=Go Sensei en arrière-plan (icône dans la zone de notification)\n"
+                f"Exec={launch_command()} --no-window\nIcon=go-sensei\nTerminal=false\n"
+                "X-GNOME-Autostart-enabled=true\n")

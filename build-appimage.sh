@@ -48,7 +48,7 @@ RECETTE="$(mktemp -d)"
 TRAVAIL="$(mktemp -d)"
 trap 'rm -rf "$RECETTE" "$TRAVAIL"' EXIT
 cp appimage/gosensei.desktop appimage/gosensei.png appimage/entrypoint.sh "$RECETTE/"
-printf '%s\n' "$PROJET[anthropic]" > "$RECETTE/requirements.txt"
+printf '%s\n' "$PROJET[anthropic,tray]" > "$RECETTE/requirements.txt"
 
 echo "== construction (Python $PYVER manylinux)"
 rm -f GoSensei-x86_64.AppImage
@@ -108,8 +108,8 @@ fi
 
 echo
 echo "== vérification de l'image"
-if "$OUT" --appimage-extract-and-run --python -c "import gosensei.server, anthropic" >/dev/null 2>&1; then
-    echo "   Go Sensei et SDK Anthropic : OK"
+if "$OUT" --appimage-extract-and-run --python -c "import gosensei.server, anthropic, dbus_fast" >/dev/null 2>&1; then
+    echo "   Go Sensei, SDK Anthropic et icône de notification : OK"
 else
     echo "   ATTENTION : Go Sensei ne s'importe pas dans l'image" >&2
 fi

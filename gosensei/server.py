@@ -17,6 +17,7 @@ from .games import Library
 from .katago import Engine
 from .mcp import Tools, handle_rpc
 from .study import Study
+from .tray import Tray
 from .window import Window
 
 LOGS = []
@@ -80,6 +81,7 @@ class App:
         self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
         self.window = None
+        self.tray = None
         self.server = None
         self.stopping = False
 
@@ -95,12 +97,22 @@ class App:
             time.sleep(0.6)
             if self.window:
                 self.window.close()
+            if self.tray:
+                self.tray.stop()
             self.coach.shutdown()
             self.engine.stop()
             if self.server:
                 self.server.shutdown()
 
         threading.Thread(target=later, daemon=True).start()
+
+    def open_window(self):
+        """Ouvre l'interface (navigateur par défaut ou fenêtre dédiée, selon les réglages).
+        En arrière-plan, fermer la fenêtre n'arrête pas Go Sensei."""
+        launch = self.cfg["launch"]
+        on_closed = None if launch["background"] else (lambda: self.shutdown("fenêtre fermée"))
+        self.window = Window(self.url, log, on_closed, launch["mode"])
+        self.window.open()
 
     def watch_idle(self):
         """Mode application : sans fenêtre connectée pendant un moment, on s'arrête."""
@@ -227,6 +239,9 @@ class App:
             self.hub.send("chat", {"kind": "reload"})
         if self.cfg["katago"] != old_katago:
             self.engine.restart()
+        if "launch" in patch:
+            from .config import set_autostart
+            set_autostart(self.cfg["launch"]["autostart"])
         if "ogs" in patch:
             self.lib._cache.clear()  # la couleur de l'élève dépend du pseudo
         return self.config_info()
@@ -418,9 +433,14 @@ def run(open_window=None, port=None):
     app.engine.start()
     threading.Thread(target=app.startup_tasks, daemon=True).start()
     log(f"Go Sensei {__version__} : {app.url}")
+    launch = app.cfg["launch"]
+    if launch["tray"]:
+        app.tray = Tray(on_open=app.open_window, on_quit=lambda: app.shutdown("icône de notification"), log=log)
+        app.tray.start()
     if open_window if open_window is not None else app.cfg["open_window"]:
-        app.window = Window(app.url, log, lambda: app.shutdown("fenêtre fermée"))
-        app.window.open()
+        app.open_window()
+    if not launch["background"]:
+        # Sans arrière-plan : on s'arrête quand plus aucune fenêtre n'est ouverte.
         threading.Thread(target=app.watch_idle, daemon=True).start()
     try:
         server.serve_forever()

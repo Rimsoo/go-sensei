@@ -844,6 +844,8 @@ $("#settings-form").addEventListener("submit", async (e) => {
     ogs: { username: field("ogs.username").value.trim(), auto_sync: field("ogs.auto_sync").checked, sync_count: num("ogs.sync_count") || 30 },
     sources: { conquest: mode === "auto" ? "auto" : mode === "off" ? "" : field("sources.conquest_path").value.trim(),
                folders: field("sources.folders").value.split("\n").map((x) => x.trim()).filter(Boolean) },
+    launch: { mode: field("launch.mode").value, background: field("launch.background").checked,
+              tray: field("launch.tray").checked, autostart: field("launch.autostart").checked },
   };
   try {
     CFG = await post("/api/config", patch);

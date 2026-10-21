@@ -22,26 +22,31 @@ def find_app_browser():
 
 
 class Window:
-    def __init__(self, url, log, on_closed):
+    """mode "browser" : onglet du navigateur par défaut ; mode "app" : fenêtre Chromium dédiée
+    (sans barre d'adresse). on_closed est appelé quand la fenêtre dédiée est fermée."""
+
+    def __init__(self, url, log, on_closed=None, mode="browser"):
         self.url = url
         self.log = log
         self.on_closed = on_closed
+        self.mode = mode
         self.proc = None
 
     def open(self):
-        browser = find_app_browser()
         env = paths.host_env()
+        browser = find_app_browser() if self.mode == "app" else None
         if browser:
             cmd = [browser, f"--app={self.url}", f"--user-data-dir={paths.BROWSER_PROFILE}", "--class=GoSensei",
                    "--no-first-run", "--no-default-browser-check", "--window-size=1600,1000"]
             self.proc = subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
                                          start_new_session=True)
-            threading.Thread(target=self._watch, daemon=True).start()
+            if self.on_closed:
+                threading.Thread(target=self._watch, daemon=True).start()
             self.log(f"Fenêtre : {os.path.basename(browser)} en mode application")
         else:
             subprocess.Popen(["xdg-open", self.url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, env=env,
                              start_new_session=True)
-            self.log("Fenêtre : navigateur par défaut (onglet)")
+            self.log("Fenêtre : navigateur par défaut")
 
     def _watch(self):
         started = time.time()

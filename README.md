@@ -23,8 +23,13 @@ variantes, dessine dessus et vérifie chaque affirmation avec KataGo.
 L'AppImage embarque tout : Python, KataGo (carte graphique via OpenCL, ou processeur) et son réseau de neurones.
 Au premier lancement sur carte graphique, KataGo se calibre pendant 1 à 2 minutes, une seule fois.
 
-La fenêtre s'ouvre en mode application si Chromium, Chrome, Brave, Edge ou Vivaldi est installé, sinon dans ton
-navigateur par défaut. **Fermer la fenêtre ou cliquer sur ⏻ arrête tout** : serveur, KataGo et IA.
+Go Sensei s'ouvre dans ton navigateur par défaut et continue en arrière-plan quand tu fermes l'onglet, avec une
+icône dans la zone de notification (comme Sunshine ou Steam) : clic pour rouvrir, menu pour quitter. Relancer
+l'appli depuis le menu rouvre simplement l'interface. **⏻ dans l'interface ou « Quitter » dans le menu de l'icône
+arrête tout** : serveur, KataGo et IA.
+
+Dans ⚙ Réglages → Lancement : fenêtre dédiée sans barre d'adresse (Chromium, Chrome, Brave, Edge ou Vivaldi),
+arrêt automatique à la fermeture de la fenêtre, et lancement avec la session.
 
 ## Fonctionnalités
 

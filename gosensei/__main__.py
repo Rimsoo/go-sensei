@@ -36,12 +36,13 @@ def main(argv=None):
         return
 
     from .config import Config
-    port = args.port or Config()["port"]
+    cfg = Config()
+    port = args.port or cfg["port"]
     if running(port):
-        # Déjà lancé : on rouvre juste la fenêtre.
+        # Déjà lancé (en arrière-plan par exemple) : on ouvre juste l'interface.
         if not args.no_window:
             from .window import Window
-            Window(f"http://127.0.0.1:{port}", print, lambda: None).open()
+            Window(f"http://127.0.0.1:{port}", print, None, cfg["launch"]["mode"]).open()
         print(f"Go Sensei tourne déjà sur http://127.0.0.1:{port}")
         return
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "go-sensei"
-version = "0.3.2"
+version = "0.4.0"
 description = "Plateau d'analyse KataGo et professeur IA pour apprendre le Go"
 readme = "README.md"
 license = { text = "MIT" }
@@ -14,6 +14,8 @@ dependencies = []
 [project.optional-dependencies]
 # Professeur IA via l'API Anthropic (les autres fournisseurs n'ont besoin de rien)
 anthropic = ["anthropic"]
+# Icône dans la zone de notification (StatusNotifierItem via D-Bus)
+tray = ["dbus-fast"]
 
 [project.scripts]
 go-sensei = "gosensei.__main__:main"

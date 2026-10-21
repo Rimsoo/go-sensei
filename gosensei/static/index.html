@@ -131,6 +131,7 @@
       <button data-tab="ai" class="active">Professeur IA</button>
       <button data-tab="engine">KataGo</button>
       <button data-tab="games">Parties</button>
+      <button data-tab="launch">Lancement</button>
       <button data-tab="about">À propos</button>
     </div>
     <form id="settings-form" class="settings">
@@ -218,6 +219,21 @@
         </label>
       </section>
 
+      <section data-pane="launch" class="hidden">
+        <label>Ouvrir Go Sensei dans
+          <select name="launch.mode">
+            <option value="browser">Mon navigateur par défaut (Firefox, Zen…)</option>
+            <option value="app">Une fenêtre dédiée (Chromium, sans barre d'adresse)</option>
+          </select>
+        </label>
+        <label class="check"><input type="checkbox" name="launch.background"> Continuer en arrière-plan quand la fenêtre est fermée</label>
+        <label class="check"><input type="checkbox" name="launch.tray"> Icône dans la zone de notification (clic : ouvrir, menu : quitter)</label>
+        <label class="check"><input type="checkbox" name="launch.autostart"> Lancer Go Sensei avec ma session (en arrière-plan)</label>
+        <p class="muted small-text">En arrière-plan, rouvre Go Sensei avec l'icône de notification ou depuis le menu des
+          applications. Pour l'arrêter complètement : bouton ⏻ ou « Quitter » dans le menu de l'icône.
+          Les changements d'icône et de mode s'appliquent au prochain lancement.</p>
+      </section>
+
       <section data-pane="about" class="hidden">
         <div id="about" class="info-box"></div>
       </section>
@@ -231,7 +247,7 @@
 </div>
 
 <div id="shutdown" class="shutdown hidden">
-  <div><div class="logo big"></div><h2>Go Sensei est fermé</h2><p class="muted">Tu peux fermer cette fenêtre.</p></div>
+  <div><div class="logo big"></div><h2>Go Sensei est fermé</h2><p class="muted">Tu peux fermer cette fenêtre ou cet onglet.</p></div>
 </div>
 <div id="drop" class="drop hidden"><div>Dépose ton fichier .sgf</div></div>
 <div id="toast" class="toast hidden"></div>
