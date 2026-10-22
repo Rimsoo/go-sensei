@@ -11,6 +11,7 @@
 <header class="topbar">
   <div class="brand"><span class="logo"></span>Go Sensei</div>
   <button id="btn-games" class="btn">📂 Parties</button>
+  <button id="btn-notes" class="btn" title="Ce que Sensei a noté sur tes progrès">📓 Carnet</button>
   <div id="game-title" class="game-title">Aucune partie</div>
   <div class="spacer"></div>
   <label class="toggle"><input type="checkbox" id="opt-suggest" checked> Suggestions IA</label>
@@ -243,6 +244,27 @@
         <button type="submit" class="btn primary">Enregistrer</button>
       </div>
     </form>
+  </div>
+</div>
+
+<!-- ============================================================ Carnet -->
+<div id="notes-modal" class="modal hidden">
+  <div class="modal-box wide">
+    <div class="modal-head">
+      <h2>📓 Carnet de progression</h2>
+      <div class="row">
+        <button id="notes-edit" class="btn small">✏️ Modifier</button>
+        <button id="notes-cancel" class="btn small ghost hidden">Annuler</button>
+        <button id="notes-save" class="btn small primary hidden">Enregistrer</button>
+        <button class="btn ghost" data-close>✕</button>
+      </div>
+    </div>
+    <p class="muted small-text">Ce que Sensei retient de tes parties : thèmes récurrents, progrès, réflexes à ancrer.
+      Il le relit au début de chaque conversation. Tu peux corriger, supprimer ou ajouter des notes (une ligne par note,
+      « - AAAA-MM-JJ : texte »).</p>
+    <input id="notes-search" class="search" placeholder="Rechercher (ex. vie et mort, atari, zone…)">
+    <div id="notes-view" class="notes-view"></div>
+    <textarea id="notes-text" class="notes-text hidden" spellcheck="false"></textarea>
   </div>
 </div>
 

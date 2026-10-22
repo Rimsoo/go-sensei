@@ -606,10 +606,11 @@ function renderChat() {
     if (m.role === "user") d.textContent = m.text;
     else {
       const tools = (m.tools || []).map((t) => `<span class="tool">🔧 ${TOOL_FR[t] || t}</span>`).join("");
+      const notesHtml = (m.notes || []).map((n) => `<div class="msg-note" title="Ouvrir le carnet">📓 <b>Noté dans ton carnet</b> : ${inline(esc(n))}</div>`).join("");
       const links = (m.nodes || []).map((n) => `<button class="node-link${S && n.id === S.current ? " active" : ""}" data-node="${n.id}">`
         + `${n.label.startsWith("variante") ? "🔀" : "📍"} ${esc(n.label)}</button>`).join("");
       d.innerHTML = (tools ? `<div class="tools">${tools}</div>` : "") + `<div class="body">${markdown(m.text || "")}</div>`
-        + (links ? `<div class="node-links">${links}</div>` : "");
+        + notesHtml + (links ? `<div class="node-links">${links}</div>` : "");
     }
     box.appendChild(d);
   });
@@ -640,6 +641,7 @@ $("#an-moves").addEventListener("click", (e) => {
 });
 
 $("#messages").addEventListener("click", (e) => {
+  if (e.target.closest(".msg-note")) return openNotes();
   const b = e.target.closest(".node-link");
   if (b) post("/api/goto-node", { id: parseInt(b.dataset.node, 10) }).catch(() => toast("Cette position n'existe plus (variante supprimée ?)"));
 });
@@ -774,6 +776,55 @@ window.addEventListener("drop", (e) => {
 document.querySelectorAll(".modal").forEach((m) => m.addEventListener("click", (e) => {
   if (e.target === m || e.target.closest("[data-close]")) m.classList.add("hidden");
 }));
+
+// ------------------------------------------------------------------ carnet
+let notes = null, notesEditing = false;
+const DAY_FMT = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+
+async function openNotes() {
+  notes = await (await fetch("/api/notes")).json();
+  setNotesEditing(false);
+  $("#notes-modal").classList.remove("hidden");
+}
+function setNotesEditing(on) {
+  notesEditing = on;
+  $("#notes-view").classList.toggle("hidden", on);
+  $("#notes-search").classList.toggle("hidden", on);
+  $("#notes-text").classList.toggle("hidden", !on);
+  $("#notes-edit").classList.toggle("hidden", on);
+  $("#notes-save").classList.toggle("hidden", !on);
+  $("#notes-cancel").classList.toggle("hidden", !on);
+  if (on) { $("#notes-text").value = notes.content; $("#notes-text").focus(); } else renderNotes();
+}
+function renderNotes() {
+  const box = $("#notes-view");
+  const q = $("#notes-search").value.trim().toLowerCase();
+  const entries = (notes ? notes.entries : []).filter((e) => !q || e.text.toLowerCase().includes(q));
+  if (!entries.length) {
+    box.innerHTML = `<p class="muted">${q ? "Aucune note ne correspond." : "Le carnet est vide : Sensei y notera tes progrès au fil des séances."}</p>`;
+    return;
+  }
+  const byDay = new Map();
+  for (const e of entries) {
+    if (!byDay.has(e.date)) byDay.set(e.date, []);
+    byDay.get(e.date).push(e);
+  }
+  // Les jours les plus récents en premier, les notes dans l'ordre où elles ont été prises
+  box.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
+    const title = day ? DAY_FMT.format(new Date(day + "T12:00:00")) : "Sans date";
+    return `<section class="notes-day"><h4>${esc(title)}</h4>` + list.map((e) => `<div class="note">${inline(esc(e.text))}</div>`).join("") + "</section>";
+  }).join("");
+}
+$("#btn-notes").onclick = openNotes;
+$("#notes-search").addEventListener("input", renderNotes);
+$("#notes-edit").onclick = () => setNotesEditing(true);
+$("#notes-cancel").onclick = () => setNotesEditing(false);
+$("#notes-save").onclick = async () => {
+  try {
+    notes = await post("/api/notes", { content: $("#notes-text").value });
+    setNotesEditing(false);
+  } catch {}
+};
 
 // ------------------------------------------------------------------ moteur KataGo
 function renderEngine(E) {
@@ -984,6 +1035,9 @@ function connect() {
         if (prev && prev.id === ev.id) prev.label = ev.label;
         else last.nodes.push({ id: ev.id, label: ev.label });
       }
+    } else if (ev.kind === "note") {
+      const last = chat[chat.length - 1];
+      if (last && last.role === "assistant") (last.notes = last.notes || []).push(ev.text);
     } else if (ev.kind === "tool") {
       const last = chat[chat.length - 1];
       if (last && last.role === "assistant") last.tools.push(ev.name);
@@ -1000,6 +1054,10 @@ function connect() {
   es.addEventListener("engine", (e) => {
     renderEngine(JSON.parse(e.data));
     if (!$("#settings-modal").classList.contains("hidden")) renderEngineInfo();
+  });
+  es.addEventListener("notes", (e) => {
+    notes = JSON.parse(e.data);
+    if (!$("#notes-modal").classList.contains("hidden") && !notesEditing) renderNotes();
   });
   es.addEventListener("games", () => { if (!$("#games-modal").classList.contains("hidden")) refreshGames(); });
   es.addEventListener("shutdown", () => { stopped = true; es.close(); showShutdown(); });
@@ -1027,4 +1085,5 @@ connect();
 
 // Ouverture directe d'un écran via l'adresse (#parties, #reglages)
 if (location.hash === "#parties") openGames();
+else if (location.hash === "#carnet") openNotes();
 else if (location.hash.startsWith("#reglages")) openSettings(location.hash.split("-")[1] || "ai");

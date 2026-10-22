@@ -77,6 +77,7 @@ class App:
         self.study = Study(self.lib, self.engine, self.cfg, self.hub.send, log)
         self.tools = Tools(self.study, paths.NOTES_FILE)
         self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
+        self.tools.on_note = self._on_note
         # Une conversation par partie : on suit la partie ouverte.
         self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
@@ -149,6 +150,30 @@ class App:
             txt += f"coup {s.cursor}/{len(s.main)} de la partie, "
         txt += f"au trait : {'Noir' if s.to_play() == 'B' else 'Blanc'}"
         return txt
+
+    def _on_note(self, text):
+        self.coach.attach_note(text)
+        self.hub.send("notes", self.notes_info())
+
+    def notes_info(self):
+        from .mcp import parse_notes
+        try:
+            with open(paths.NOTES_FILE, encoding="utf-8") as f:
+                content = f.read()
+        except OSError:
+            content = ""
+        return {"content": content, "entries": parse_notes(content), "path": paths.NOTES_FILE}
+
+    def save_notes(self, content):
+        """Le carnet modifié par l'élève (l'ancienne version est gardée en .bak)."""
+        if os.path.exists(paths.NOTES_FILE):
+            import shutil
+            shutil.copy2(paths.NOTES_FILE, paths.NOTES_FILE + ".bak")
+        with open(paths.NOTES_FILE, "w", encoding="utf-8") as f:
+            f.write(content.rstrip() + "\n")
+        info = self.notes_info()
+        self.hub.send("notes", info)
+        return info
 
     def rich_context(self):
         """Position complète pour les modèles qui ne vont pas la chercher eux-mêmes : d'abord
@@ -285,6 +310,8 @@ class App:
             self.coach.reset()
         elif path == "/api/config":
             return self.apply_config(body)
+        elif path == "/api/notes":
+            return self.save_notes(body.get("content", ""))
         elif path == "/api/ai/models":
             settings = dict(self.cfg["ai"], **{k: v for k, v in body.items() if v})
             if not body.get("api_key"):
@@ -341,6 +368,7 @@ def make_handler(app):
                 "/api/games": app.lib.list,
                 "/api/chat": app.chat_info,
                 "/api/config": app.config_info,
+                "/api/notes": app.notes_info,
                 "/api/logs": lambda: LOGS,
                 "/api/status": lambda: {"app": "go-sensei", "version": __version__},
             }

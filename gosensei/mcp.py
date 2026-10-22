@@ -3,6 +3,7 @@
 import datetime
 import json
 import os
+import re
 
 from .board import to_gtp
 
@@ -25,6 +26,26 @@ def pov(value, color):
     return None if value is None else (value if color == "B" else -value)
 
 
+def clean_note(note):
+    """Une note sur une seule ligne, sans date en tête (elle est ajoutée automatiquement)."""
+    note = " ".join(note.split())
+    return re.sub(r"^(\d{4}-\d{2}-\d{2}\s*:\s*)+", "", note)
+
+
+def parse_notes(text):
+    """Entrées du carnet : [{"date", "text"}] (lignes « - AAAA-MM-JJ : texte »)."""
+    out = []
+    for line in text.splitlines():
+        m = re.match(r"^\s*[-*]\s*(\d{4}-\d{2}-\d{2})\s*:\s*(.*)$", line)
+        if m:
+            out.append({"date": m.group(1), "text": clean_note(m.group(2))})
+        elif line.strip() and not line.startswith("#") and out:
+            out[-1]["text"] += " " + line.strip()  # suite d'une note sur plusieurs lignes
+        elif line.strip() and not line.startswith("#"):
+            out.append({"date": "", "text": line.strip().lstrip("-* ")})
+    return out
+
+
 class Tools:
     def __init__(self, study, notes_path):
         self.s = study
@@ -32,6 +53,7 @@ class Tools:
         # Appelé quand l'IA montre une position (id du nœud, libellé) : le chat garde un lien
         # vers chaque position expliquée, pour que l'élève puisse y revenir.
         self.on_node = None
+        self.on_note = None  # appelé avec le texte d'une note ajoutée au carnet
 
     def _shown(self):
         if self.on_node and self.s.game:
@@ -96,7 +118,7 @@ class Tools:
              "description": "Lit le carnet de l'élève : niveau, faiblesses récurrentes, progrès, notes des séances précédentes.",
              "inputSchema": {"type": "object", "properties": {}}},
             {"name": "save_student_note",
-             "description": "Ajoute une note datée au carnet de l'élève (faiblesse récurrente, concept compris, progrès). Court et utile pour les prochaines séances.",
+             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
         ]
 
@@ -297,15 +319,26 @@ class Tools:
         if not os.path.exists(self.notes_path):
             return "Carnet vide : première séance."
         with open(self.notes_path, encoding="utf-8") as f:
-            return f.read()[-8000:]
+            text = f.read()
+        if len(text) <= 40000:
+            return text
+        # Trop long : on garde les notes les plus récentes, en coupant entre deux lignes.
+        tail = text[-40000:]
+        return "(début du carnet omis)\n" + tail[tail.find("\n") + 1:]
 
     def t_save_student_note(self, note):
+        note = clean_note(note)
         new = not os.path.exists(self.notes_path)
         with open(self.notes_path, "a", encoding="utf-8") as f:
             if new:
                 f.write("# Carnet de l'élève\n\n")
-            f.write(f"- {datetime.date.today().isoformat()} : {note.strip()}\n")
-        return "Note enregistrée."
+            f.write(f"- {datetime.date.today().isoformat()} : {note}\n")
+        if self.on_note:
+            try:
+                self.on_note(note)
+            except Exception:
+                pass
+        return "Note enregistrée (l'élève la voit sous ton message et dans son carnet)."
 
 
 def handle_rpc(tools, msg):

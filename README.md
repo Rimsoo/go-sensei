@@ -64,6 +64,10 @@ arrêt automatique à la fermeture de la fenêtre, et lancement avec la session.
   fiable que Claude pour expliquer le « pourquoi ». Chaque clé d'API n'est envoyée qu'au service pour lequel elle a
   été saisie.
 
+  Le **carnet de progression** (bouton 📓 Carnet) rassemble ce que Sensei retient de tes parties : thèmes
+  récurrents, progrès, réflexes à ancrer. Tu peux le lire, le rechercher et le modifier ; chaque nouvelle note
+  apparaît aussi sous le message de Sensei.
+
   L'IA n'a accès qu'au plateau : aucun shell, aucun fichier. Chacun de ses messages garde des liens vers les
   positions et variantes qu'elle a montrées : un clic te ramène à son explication. Elle tient aussi un carnet
   de tes progrès d'une séance à l'autre.

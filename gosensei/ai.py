@@ -35,7 +35,8 @@ Comment travailler :
   à retenir quand c'est pertinent. Termine si utile par une question pour vérifier la compréhension.
 - Coordonnées : colonnes A-T sans la lettre I, ligne 1 en bas.
 - Français, ton chaleureux et encourageant, jamais condescendant.
-- Mémoire : au début d'une conversation, lis le carnet de l'élève (read_student_profile). Quand tu repères une faiblesse
+- Mémoire : au début d'une conversation, lis le carnet de l'élève (read_student_profile). L'élève lit aussi ce carnet
+  dans l'appli (bouton 📓 Carnet) : écris-y des notes claires et bienveillantes. Quand tu repères une faiblesse
   récurrente, un concept compris ou un progrès, note-le brièvement (save_student_note).
 - Chaque message de l'élève commence par [Plateau : ...] qui résume ce qu'il voit : tiens-en compte."""
 
@@ -160,6 +161,13 @@ class Coach:
         else:
             nodes.append({"id": nid, "label": label})
         self.broadcast("chat", {"kind": "node", "id": nid, "label": label})
+
+    def attach_note(self, text):
+        """Affiche sous le message en cours une note que l'IA vient d'ajouter au carnet."""
+        if not self.busy or not self._visible():
+            return
+        self._current().setdefault("notes", []).append(text)
+        self.broadcast("chat", {"kind": "note", "text": text})
 
     def finish(self, error=None):
         if error:

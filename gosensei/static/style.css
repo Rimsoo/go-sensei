@@ -218,6 +218,17 @@ button { font: inherit; color: inherit; }
 .msg tbody tr:nth-child(even) td { background: #ffffff05; }
 .msg hr { border: none; border-top: 1px solid var(--line); margin: 10px 0; }
 
+/* ---------------------------------------------------------- carnet */
+.notes-view { overflow-y: auto; display: flex; flex-direction: column; gap: 14px; padding-right: 4px; }
+.notes-day h4 { margin: 0 0 6px; font-size: 14px; color: var(--accent); text-transform: capitalize; }
+.note { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent-2);
+  border-radius: 8px; padding: 8px 12px; margin-bottom: 6px; font-size: 14px; line-height: 1.55; }
+.notes-text { flex: 1; min-height: 55vh; background: var(--bg); color: var(--text); border: 1px solid var(--line);
+  border-radius: 8px; padding: 10px 12px; font: 13px/1.5 "JetBrains Mono", "DejaVu Sans Mono", monospace; resize: vertical; }
+.msg-note { margin-top: 8px; padding: 6px 10px; border-radius: 8px; background: #9b5de51f; border: 1px solid #9b5de566;
+  font-size: 13px; cursor: pointer; }
+.msg-note:hover { background: #9b5de533; }
+
 /* ---------------------------------------------------------- arbre des coups */
 .tree-wrap { overflow: auto; max-height: 120px; min-height: 44px; }
 #tree { display: block; }
