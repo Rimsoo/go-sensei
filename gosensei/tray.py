@@ -265,12 +265,27 @@ class Tray:
         bus.export(MENU_PATH, DBusMenu(self))
         name = f"org.kde.StatusNotifierItem-{os.getpid()}-1"
         await bus.request_name(name)
-        intro = await bus.introspect("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
-        watcher = bus.get_proxy_object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", intro) \
-            .get_interface("org.kde.StatusNotifierWatcher")
-        await watcher.call_register_status_notifier_item(name)
-        self.log("Icône ajoutée à la zone de notification")
-        await bus.wait_for_disconnect()
+        # La barre (Waybar, KDE…) peut démarrer APRÈS Go Sensei, ou redémarrer : on vérifie
+        # régulièrement que l'icône y est enregistrée, et on la (ré)enregistre sinon.
+        shown = False
+        while not self.stopping:
+            try:
+                intro = await bus.introspect("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher")
+                watcher = bus.get_proxy_object("org.kde.StatusNotifierWatcher", "/StatusNotifierWatcher", intro) \
+                    .get_interface("org.kde.StatusNotifierWatcher")
+                items = await watcher.get_registered_status_notifier_items()
+                if not any(name in item for item in items):
+                    await watcher.call_register_status_notifier_item(name)
+                    self.log("Icône ajoutée à la zone de notification")
+                    shown = True
+            except Exception as e:
+                if shown:
+                    self.log("Zone de notification absente, l'icône sera remise dès son retour")
+                    shown = False
+                elif not getattr(self, "_waiting_logged", False):
+                    self._waiting_logged = True
+                    self.log(f"En attente de la zone de notification ({e})")
+            await asyncio.sleep(3)
 
     def stop(self):
         self.stopping = True
