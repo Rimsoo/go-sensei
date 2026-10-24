@@ -228,6 +228,7 @@ class ClaudeCodeCoach(Coach):
         self.model = model
         self.proc = None
         self.session_id = None
+        self.last_payload = None
         super().__init__(broadcast, log)
 
     def restore(self, state):
@@ -284,9 +285,33 @@ class ClaudeCodeCoach(Coach):
                 elif e.get("type") == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use":
                     self.emit_tool(e["content_block"].get("name", "").replace("mcp__gosensei__", ""))
             elif t == "result":
+                if any("No conversation found" in e for e in ev.get("errors") or []):
+                    # Session absente de cette machine (données copiées d'un autre PC,
+                    # historique de Claude Code effacé…) : on repart d'une conversation neuve.
+                    self._restart_without_session(proc)
+                    return
                 self.finish(ev.get("result") or "erreur inconnue" if ev.get("is_error") else None)
         if self.busy:
             self.finish("Claude Code s'est arrêté. Réessaie ton message.")
+
+    def _restart_without_session(self, proc):
+        self.log("IA : session Claude Code introuvable sur cette machine, nouvelle conversation")
+        with self.lock:
+            if proc.poll() is None:
+                proc.kill()
+            if self.proc is not proc:
+                return
+            self.session_id = None
+            self._spawn()
+            self._write(self.last_payload)
+
+    def _write(self, payload):
+        try:
+            self.proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
+            self.proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            self.proc = None
+            self.finish("Claude Code n'a pas pu démarrer : vérifie que la commande `claude` fonctionne dans un terminal.")
 
     def send(self, text, context, rich_context=None):
         with self.lock:
@@ -294,12 +319,8 @@ class ClaudeCodeCoach(Coach):
             if not self.proc or self.proc.poll() is not None:
                 self._spawn()
             payload = {"type": "user", "message": {"role": "user", "content": f"[Plateau : {context}]\n{text}"}}
-            try:
-                self.proc.stdin.write(json.dumps(payload, ensure_ascii=False) + "\n")
-                self.proc.stdin.flush()
-            except (BrokenPipeError, OSError):
-                self.proc = None
-                self.finish("Claude Code n'a pas pu démarrer : vérifie que la commande `claude` fonctionne dans un terminal.")
+            self.last_payload = payload
+            self._write(payload)
 
     def stop(self):
         with self.lock:
