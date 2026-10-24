@@ -98,6 +98,7 @@ class Engine:
         self.stopping = False
         self.gpu_failed = False
         self.installing = False
+        self.last_error = ""
         self.wake = threading.Event()  # réveille la boucle après une installation
         self.state = {"state": "stopped", "backend": None, "progress": None, "message": "", "download": None}
 
@@ -172,6 +173,8 @@ class Engine:
 
     def suggest_network(self, kind):
         """(réseau conseillé, raison) pour le moteur `kind` qui tourne ou va tourner."""
+        if kind == "opencl" and self.cfg["katago"].get("small_gpu"):
+            return "b10", "carte graphique modeste : b18 n'y tient pas"
         if kind in ("opencl", "custom"):
             return "b18", "carte graphique : le réseau le plus fort reste rapide"
         cores = os.cpu_count() or 2
@@ -375,16 +378,26 @@ class Engine:
                 self._set(state="error", message=str(e))
                 self.wake.wait()
                 continue
-            threading.Thread(target=self._read_err, args=(self.proc,), daemon=True).start()
+            self.last_error = ""
+            err_reader = threading.Thread(target=self._read_err, args=(self.proc,), daemon=True)
+            err_reader.start()
             self._send_raw({"id": "warmup", "moves": [], "rules": "japanese", "komi": 6.5,
                             "boardXSize": 9, "boardYSize": 9, "maxVisits": 1})
             self._read_out(self.proc)
             # Le process s'est terminé.
+            err_reader.join(timeout=2)  # pour avoir sa dernière erreur
             was_ready = self.ready.is_set()
             self.ready.clear()
             self._fail_pending()
             if self.stopping:
                 break
+            if not was_ready and kind == "opencl" and not self.wake.is_set() \
+                    and self.network_of(model) == "b18" and self.cfg["katago"].get("network", "auto") == "auto":
+                # Petite carte graphique (ex. GeForce 940MX, 2 Go) : b18 plante dès la première
+                # analyse alors que b10 y tourne 4 fois plus vite que sur le processeur.
+                self.log("KataGo : b18 trop lourd pour cette carte graphique, essai avec b10")
+                self.cfg.update({"katago": {"small_gpu": True}})
+                continue
             if not was_ready and kind == "opencl" and self.cfg["katago"]["backend"] == "auto":
                 self.log("KataGo : le GPU (OpenCL) ne démarre pas, passage au CPU")
                 self.gpu_failed = True
@@ -392,7 +405,8 @@ class Engine:
             if self.wake.is_set():  # relance demandée
                 continue
             if not was_ready:
-                self._set(state="error", message="KataGo n'a pas pu démarrer (voir le journal)")
+                self._set(state="error", message="KataGo n'a pas pu démarrer"
+                          + (f" : {self.last_error}" if self.last_error else " (voir le journal)"))
                 self.wake.wait()
                 continue
             self.log("KataGo : arrêt inattendu, relance")
@@ -409,7 +423,7 @@ class Engine:
                 continue
             if any(w in low for w in ("error", "exception", "failed")):
                 self.log(f"KataGo : {line[:300]}")
-                self.state["message"] = line[:300]
+                self.last_error = line.removeprefix("what():").strip()[:300]
 
     def _read_out(self, proc):
         for line in proc.stdout:

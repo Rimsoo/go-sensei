@@ -21,6 +21,7 @@ DEFAULTS = {
         "backend": "auto",      # auto | gpu | cpu
         "binary": "",           # chemin d'un KataGo personnel (optionnel)
         "network": "auto",      # auto | b6 | b10 | b15 | b18 (voir katago.NETWORKS)
+        "small_gpu": False,     # détecté : b18 ne tient pas sur la carte graphique
         "model": "",            # chemin d'un réseau .bin.gz personnel (optionnel, prioritaire)
         "live_visits": 0,       # 0 = automatique selon la taille du plateau
         "review_visits": 0,

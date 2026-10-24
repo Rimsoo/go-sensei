@@ -845,7 +845,13 @@ function renderEngine(E) {
   $("#engine-msg").textContent = E.state === "tuning"
     ? "Première utilisation : KataGo optimise ses calculs pour ta carte graphique (1 à 2 minutes, une seule fois)."
     : E.message || "";
-  if (E.state === "error") $("#btn-install").textContent = "Réessayer";
+  // Moteur installé mais qui plante : inutile de parler de téléchargement.
+  const installed = E.state === "tuning" || (E.state === "error" && !E.can_install);
+  $("#engine-intro").classList.toggle("hidden", installed);
+  if (E.state === "error") {
+    $("#btn-install").textContent = "Réessayer";
+    if (installed) $("#engine-msg").textContent += " — ⚙ Réglages → KataGo pour changer de calcul ou de réseau.";
+  }
 }
 $("#btn-install").onclick = () => post("/api/engine/install");
 

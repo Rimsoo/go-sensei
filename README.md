@@ -24,7 +24,8 @@ L'AppImage embarque tout : Python, KataGo (carte graphique via OpenCL, ou proces
 Au premier lancement sur carte graphique, KataGo se calibre pendant 1 à 2 minutes, une seule fois.
 
 Le réseau est choisi selon le PC : le plus fort (b18) sur carte graphique, un réseau moyen (b10) sur processeur,
-où b18 serait 10 à 15 fois plus lent. ⚙ Réglages → KataGo indique le réseau conseillé et pourquoi, et permet d'en
+où b18 serait 10 à 15 fois plus lent. Sur une petite carte graphique où b18 ne tient pas (GeForce 940MX, 2 Go…),
+Go Sensei passe tout seul à b10, qui y reste environ 4 fois plus rapide que sur le processeur. ⚙ Réglages → KataGo indique le réseau conseillé et pourquoi, et permet d'en
 choisir un autre (b6, b10, b15, b18, téléchargé au besoin) ou un fichier personnel.
 
 Go Sensei s'ouvre dans ton navigateur par défaut et continue en arrière-plan quand tu fermes l'onglet, avec une
