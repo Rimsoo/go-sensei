@@ -20,8 +20,12 @@ variantes, dessine dessus et vérifie chaque affirmation avec KataGo.
 3. Optionnel : `./install.sh GoSensei-x86_64.AppImage` ajoute la commande `go-sensei` et une entrée dans le menu
    des applications. `./install.sh -u` désinstalle.
 
-L'AppImage embarque tout : Python, KataGo (carte graphique via OpenCL, ou processeur) et son réseau de neurones.
+L'AppImage embarque tout : Python, KataGo (carte graphique via OpenCL, ou processeur) et deux réseaux de neurones.
 Au premier lancement sur carte graphique, KataGo se calibre pendant 1 à 2 minutes, une seule fois.
+
+Le réseau est choisi selon le PC : le plus fort (b18) sur carte graphique, un réseau moyen (b10) sur processeur,
+où b18 serait 10 à 15 fois plus lent. ⚙ Réglages → KataGo indique le réseau conseillé et pourquoi, et permet d'en
+choisir un autre (b6, b10, b15, b18, téléchargé au besoin) ou un fichier personnel.
 
 Go Sensei s'ouvre dans ton navigateur par défaut et continue en arrière-plan quand tu fermes l'onglet, avec une
 icône dans la zone de notification (comme Sunshine ou Steam) : clic pour rouvrir, menu pour quitter. Relancer
@@ -92,7 +96,7 @@ pip install anthropic             # seulement pour le fournisseur « API Anthrop
 ```
 
 Depuis les sources, KataGo est téléchargé depuis l'interface au premier lancement : binaire officiel v1.16.3
-et réseau `kata1-b18c384nbt`, depuis GitHub et katagotraining.org. Options de lancement :
+et réseau adapté au PC (`kata1-b18c384nbt` ou `kata1-b10c128`), depuis GitHub et katagotraining.org. Options de lancement :
 `--no-window` (serveur seul), `--port N`, `--stop`.
 
 ## Où sont les fichiers ?

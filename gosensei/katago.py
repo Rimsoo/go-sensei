@@ -1,6 +1,5 @@
 """Moteur KataGo : localisation, téléchargement, choix GPU/CPU et protocole JSON 'analysis'."""
 
-import glob
 import itertools
 import json
 import os
@@ -22,8 +21,23 @@ BUILDS = {
     "eigenavx2": f"{RELEASE}/katago-v{KATAGO_VERSION}-eigenavx2-linux-x64.zip",
     "eigen": f"{RELEASE}/katago-v{KATAGO_VERSION}-eigen-linux-x64.zip",
 }
-MODEL_NAME = "kata1-b18c384nbt-s9791399168-d4261348054.bin.gz"
-MODEL_URL = f"https://media.katagotraining.org/uploaded/networks/models/kata1/{MODEL_NAME}"
+MODELS_URL = "https://media.katagotraining.org/uploaded/networks/models/kata1"
+# Réseaux proposés, du plus léger au plus fort. Sur un processeur, un petit réseau
+# va 10 à 40 fois plus vite que b18 et reste bien plus fort que l'élève.
+NETWORKS = {
+    "b6": {"file": "kata1-b6c96-s175395328-d26788732.txt.gz", "size": 4_967_720,
+           "label": "Léger (b6)", "desc": "très rapide, pour les petits processeurs"},
+    "b10": {"file": "kata1-b10c128-s1141046784-d204142634.txt.gz", "size": 14_466_254,
+            "label": "Moyen (b10)", "desc": "le bon compromis sur un processeur"},
+    "b15": {"file": "kata1-b15c192-s1672170752-d466197061.txt.gz", "size": 48_038_914,
+            "label": "Fort (b15)", "desc": "processeur puissant ou petite carte graphique"},
+    "b18": {"file": "kata1-b18c384nbt-s9791399168-d4261348054.bin.gz", "size": 97_900_000,
+            "label": "Très fort (b18)", "desc": "pour une carte graphique"},
+}
+MODEL_NAME = NETWORKS["b18"]["file"]
+CPU_MODEL_NAME = NETWORKS["b10"]["file"]
+
+STOPPED = "KataGo s'est arrêté"  # erreur reçue par les requêtes en cours quand le moteur s'arrête
 
 STATE_LABELS = {
     "absent": "KataGo non installé",
@@ -83,8 +97,9 @@ class Engine:
         self.ids = itertools.count(1)
         self.stopping = False
         self.gpu_failed = False
+        self.installing = False
         self.wake = threading.Event()  # réveille la boucle après une installation
-        self.state = {"state": "stopped", "backend": None, "progress": None, "message": ""}
+        self.state = {"state": "stopped", "backend": None, "progress": None, "message": "", "download": None}
 
     # ------------------------------------------------------------ statut
     @property
@@ -95,6 +110,8 @@ class Engine:
             label += f" {s['progress']:.0f} %"
         if s["state"] == "ready" and s["backend"]:
             label += " (GPU)" if s["backend"] == "opencl" else " (CPU)"
+        if s.get("download"):
+            label += f" · téléchargement du réseau {s['download']['progress']:.0f} %"
         return label
 
     def _set(self, **kw):
@@ -102,8 +119,14 @@ class Engine:
         self.on_status(self.describe())
 
     def describe(self):
-        return dict(self.state, label=self.status, model=self.find_model(), binaries=self.available_binaries(),
-                    can_install=not (self.find_model() and self.available_binaries()))
+        kind = self.state["backend"] or self.choose()[0]
+        model = self.find_model(kind)
+        suggested, reason = self.suggest_network(kind)
+        return dict(self.state, label=self.status, model=model, binaries=self.available_binaries(),
+                    can_install=not (model and self.available_binaries()),
+                    network=self.network_of(model), suggested=suggested, suggestion=reason,
+                    networks=[dict(key=k, label=n["label"], desc=n["desc"], size=n["size"],
+                                   installed=bool(self.network_path(k))) for k, n in NETWORKS.items()])
 
     # ------------------------------------------------------------ localisation
     def _binary_candidates(self, kind):
@@ -127,20 +150,60 @@ class Engine:
             out["custom"] = custom
         return {k: v for k, v in out.items() if v}
 
-    def find_model(self):
-        custom = self.cfg["katago"]["model"]
-        if custom and os.path.isfile(custom):
-            return custom
-        bundled = paths.bundled_katago_dir()
+    def network_path(self, key):
+        """Fichier du réseau `key` s'il est présent (embarqué, téléchargé, ou fourni par un jeu)."""
+        name = NETWORKS[key]["file"]
         cands = []
+        bundled = paths.bundled_katago_dir()
         if bundled:
-            cands += sorted(glob.glob(os.path.join(bundled, "models", "*.bin.gz")))
-        cands.append(os.path.join(paths.KATAGO_DIR, "models", MODEL_NAME))
-        cands.append(detect_conquest_model())
+            cands.append(os.path.join(bundled, "models", name))
+        cands.append(os.path.join(paths.KATAGO_DIR, "models", name))
+        if key == "b18":
+            cands.append(detect_conquest_model())
         for c in cands:
             if c and os.path.isfile(c):
                 return c
         return None
+
+    def network_of(self, model):
+        if not model:
+            return None
+        return next((k for k in NETWORKS if self.network_path(k) == model), "custom")
+
+    def suggest_network(self, kind):
+        """(réseau conseillé, raison) pour le moteur `kind` qui tourne ou va tourner."""
+        if kind in ("opencl", "custom"):
+            return "b18", "carte graphique : le réseau le plus fort reste rapide"
+        cores = os.cpu_count() or 2
+        if kind == "eigenavx2" and cores >= 4:
+            return "b10", f"processeur ({cores} cœurs) : b18 y serait 10 à 15 fois plus lent"
+        return "b6", f"petit processeur ({cores} cœurs{'' if kind == 'eigenavx2' else ', sans AVX2'})"
+
+    def wanted_network(self, kind):
+        choice = self.cfg["katago"].get("network") or "auto"
+        return choice if choice in NETWORKS else self.suggest_network(kind)[0]
+
+    def find_model(self, kind=None):
+        custom = self.cfg["katago"]["model"]
+        if custom and os.path.isfile(custom):
+            return custom
+        if kind is None:
+            kind = self.state["backend"] or self.choose()[0]
+        wanted = self.wanted_network(kind)
+        path = self.network_path(wanted)
+        if path or self.cfg["katago"].get("network", "auto") in NETWORKS:
+            return path
+        # Automatique : en attendant le réseau conseillé, n'importe quel réseau présent fait l'affaire.
+        order = sorted(NETWORKS, key=lambda k: abs(list(NETWORKS).index(k) - list(NETWORKS).index(wanted)))
+        return next((p for p in map(self.network_path, order) if p), None)
+
+    def missing_network(self, kind):
+        """Réseau voulu mais absent (None s'il est là ou si un réseau personnel est choisi)."""
+        custom = self.cfg["katago"]["model"]
+        if custom and os.path.isfile(custom):
+            return None
+        wanted = self.wanted_network(kind)
+        return None if self.network_path(wanted) else wanted
 
     def cpu_kind(self):
         return "eigenavx2" if cpu_has_avx2() else "eigen"
@@ -166,18 +229,22 @@ class Engine:
         need = []
         if not self.find_binary(kind) and not self.cfg["katago"]["binary"]:
             need.append(("binary", kind))
-        if not self.find_model():
-            need.append(("model", MODEL_NAME))
+        net = self.missing_network(kind)
+        if net:
+            need.append(("model", net))
         return need
 
     # ------------------------------------------------------------ téléchargement
     def install(self, wait=False):
+        if self.installing:
+            return
+        self.installing = True
         t = threading.Thread(target=self._install, daemon=True)
         t.start()
         if wait:
             t.join()
 
-    def _download(self, url, dest, done_before, total):
+    def _download(self, url, dest, done_before, total, progress):
         req = urllib.request.Request(url, headers={"User-Agent": "GoSensei"})
         with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
             got = 0
@@ -190,25 +257,38 @@ class Engine:
                 got += len(chunk)
                 if time.time() - last > 0.5:
                     last = time.time()
-                    self._set(progress=100 * (done_before + got) / total)
+                    progress(100 * (done_before + got) / total)
         return got
 
     def _install(self):
+        try:
+            self._install_needed()
+        finally:
+            self.installing = False
+
+    def _install_needed(self):
         need = self.wanted_downloads()
         if not need:
             self.wake.set()
             return
-        sizes = {"binary": 36_000_000, "model": 97_900_000}
-        total = sum(sizes[k] for k, _ in need)
+        # Seul le réseau manque et un autre est présent : KataGo tourne avec en attendant.
+        background = all(k == "model" for k, _ in need) and bool(self.find_model())
+        sizes = {"binary": 36_000_000}
+        total = sum(sizes.get(k) or NETWORKS[n]["size"] for k, n in need)
         done = 0
-        self._set(state="downloading", progress=0, message="")
+        if background:
+            progress = lambda pc: self._set(download={"progress": pc})
+            progress(0)
+        else:
+            progress = lambda pc: self._set(progress=pc)
+            self._set(state="downloading", progress=0, message="")
         try:
             for what, name in need:
                 if what == "binary":
                     self.log(f"Téléchargement de KataGo ({name})")
                     with tempfile.TemporaryDirectory() as tmp:
                         z = os.path.join(tmp, "k.zip")
-                        done += self._download(BUILDS[name], z, done, total)
+                        done += self._download(BUILDS[name], z, done, total, progress)
                         with zipfile.ZipFile(z) as zf:
                             member = next(m for m in zf.namelist() if os.path.basename(m) == "katago")
                             dest_dir = os.path.join(paths.KATAGO_DIR, name)
@@ -218,25 +298,34 @@ class Engine:
                             os.chmod(os.path.join(dest_dir, "katago"), 0o755)
                         unpack_appimage(os.path.join(dest_dir, "katago"))
                 else:
-                    self.log("Téléchargement du réseau de neurones KataGo")
+                    net = NETWORKS[name]
+                    self.log(f"Téléchargement du réseau de neurones KataGo {net['label']}")
                     d = os.path.join(paths.KATAGO_DIR, "models")
                     os.makedirs(d, exist_ok=True)
-                    part = os.path.join(d, name + ".part")
-                    done += self._download(MODEL_URL, part, done, total)
-                    os.replace(part, os.path.join(d, name))
-            self._set(state="starting", progress=None)
-            self.wake.set()
+                    part = os.path.join(d, net["file"] + ".part")
+                    done += self._download(f"{MODELS_URL}/{net['file']}", part, done, total, progress)
+                    os.replace(part, os.path.join(d, net["file"]))
+            if background:
+                self._set(download=None)
+                self.restart(retry_gpu=False)  # passe au nouveau réseau
+            else:
+                self._set(state="starting", progress=None)
+                self.wake.set()
         except Exception as e:
             self.log(f"Téléchargement échoué : {e}")
-            self._set(state="error", progress=None, message=f"Téléchargement échoué : {e}")
+            if background:
+                self._set(download=None, message=f"Téléchargement échoué : {e}")
+            else:
+                self._set(state="error", progress=None, message=f"Téléchargement échoué : {e}")
 
     # ------------------------------------------------------------ process
     def start(self):
         threading.Thread(target=self._loop, daemon=True).start()
 
-    def restart(self):
+    def restart(self, retry_gpu=True):
         """Relance avec les réglages actuels (changement de backend, de réseau…)."""
-        self.gpu_failed = False
+        if retry_gpu:
+            self.gpu_failed = False
         if self.proc and self.proc.poll() is None:
             self.proc.kill()
         self.wake.set()
@@ -248,7 +337,7 @@ class Engine:
             self.proc.kill()
 
     def _command(self, kind, binary):
-        model = self.find_model()
+        model = self.find_model(kind)
         threads = 16 if kind in ("opencl", "custom") else max(2, os.cpu_count() or 4)
         overrides = f"logDir={paths.LOG_DIR},numSearchThreads={threads}"
         return [binary, "analysis", "-config", os.path.join(paths.RESOURCES, "analysis.cfg"),
@@ -263,16 +352,20 @@ class Engine:
                 self.log(f"KataGo : décompression impossible de {p} ({e})")
         while not self.stopping:
             kind, binary = self.choose()
-            if not binary or not self.find_model():
-                self._set(state="absent", backend=None)
-                if self.cfg["katago"]["backend"] == "auto" and self.gpu_failed and self.find_model():
+            model = self.find_model(kind) if binary else None
+            if binary and self.missing_network(kind):
+                self.install()  # réseau choisi ou conseillé absent : petit téléchargement
+            if not binary or not model:
+                if not self.installing:  # sinon l'état « téléchargement » reste affiché
+                    self._set(state="absent", backend=None)
+                if self.cfg["katago"]["backend"] == "auto" and self.gpu_failed and self.find_model(kind):
                     self.install()  # repli CPU automatique : petit téléchargement
                 self.wake.wait()
                 self.wake.clear()
                 continue
             self.wake.clear()
             self._set(state="starting", backend=kind, message="")
-            self.log(f"KataGo : démarrage ({kind}, {os.path.basename(self.find_model())})")
+            self.log(f"KataGo : démarrage ({kind}, {os.path.basename(model)})")
             started = time.time()
             try:
                 self.proc = subprocess.Popen(self._command(kind, binary), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
@@ -350,7 +443,7 @@ class Engine:
             self.callbacks.clear()
         for rid, cb in cbs:
             try:
-                cb({"id": rid, "error": "KataGo s'est arrêté"})
+                cb({"id": rid, "error": STOPPED})
             except Exception:
                 pass
 

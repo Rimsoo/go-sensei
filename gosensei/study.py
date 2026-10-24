@@ -11,6 +11,7 @@ import threading
 import time
 
 from . import paths
+from .katago import STOPPED
 from .board import Board, IllegalMove, from_gtp, other, to_gtp
 
 # Seuils de perte (en points) pour classer les erreurs.
@@ -66,6 +67,7 @@ class Study:
         self.live_qid = None
         self.line_qid = None
         self.review = None
+        self.resuming = False
         self.on_load = None  # rappel(id de partie) quand une partie est ouverte
 
     def on_cpu(self):
@@ -397,6 +399,8 @@ class Study:
 
         def cb(resp):
             if "error" in resp:
+                if resp["error"] == STOPPED:
+                    self._resume_after_restart()
                 return
             a = self._parse(resp, moves)
             with self.lock:
@@ -416,6 +420,23 @@ class Study:
     def _deferred_live(self):
         self.engine.ready.wait()
         self.start_live_analysis()
+
+    def _resume_after_restart(self):
+        """KataGo redémarre (réglages, nouveau réseau…) : on relance ce qui tournait."""
+        if self.resuming:
+            return
+        self.resuming = True
+
+        def run():
+            self.engine.ready.wait()
+            self.resuming = False
+            self.start_live_analysis()
+            self.start_line_analysis()
+            if self.review and self.review["status"] == "interrupted" and self.game \
+                    and self.review["gid"] == self.game["id"]:
+                self.start_review()
+
+        threading.Thread(target=run, daemon=True).start()
 
     def _stop_line_analysis(self):
         if self.line_qid:
@@ -446,6 +467,8 @@ class Study:
         last = [0.0]
 
         def cb(resp):
+            if resp.get("error") == STOPPED:
+                self._resume_after_restart()
             if "error" in resp or resp.get("isDuringSearch"):
                 return
             ri = resp.get("rootInfo", {})
@@ -525,7 +548,11 @@ class Study:
         review = self.review
 
         def run():
-            self.engine.ready.wait()
+            if not self.engine.ready.is_set():
+                self.engine.ready.wait()
+                # Moteur tout juste prêt : l'analyse en direct part d'abord, sinon la revue
+                # occupe KataGo et la position affichée attend plusieurs secondes sur un CPU.
+                time.sleep(0.5)
             if self.review is not review:
                 return
             review["status"] = "running"
@@ -533,6 +560,10 @@ class Study:
             last = [0.0]
 
             def cb(resp):
+                if resp.get("error") == STOPPED:
+                    review["status"] = "interrupted"  # reprise au redémarrage du moteur
+                    self._resume_after_restart()
+                    return
                 if "error" in resp:
                     review["status"] = "error"
                     self.log(f"Revue : {resp['error']}")

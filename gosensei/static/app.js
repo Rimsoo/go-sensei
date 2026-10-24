@@ -864,6 +864,7 @@ async function openSettings(tab = "ai") {
   await loadConfig();
   const c = CFG.config;
   const presetSel = field("ai.preset");
+  fillNetworks(ENGINE || CFG.engine);
   presetSel.innerHTML = Object.entries(CFG.presets).map(([k, p]) => `<option value="${k}">${esc(p.label)}</option>`).join("");
   for (const el of $("#settings-form").querySelectorAll("[name]")) {
     const v = getPath(c, el.name);
@@ -893,6 +894,18 @@ function renderEngineInfo() {
   const bins = Object.entries(E.binaries || {}).map(([k, v]) => `${k} : <code>${esc(v)}</code>`).join("<br>") || "aucun";
   $("#engine-info").innerHTML = `État : <b>${esc(E.label)}</b>${E.message ? ` — ${esc(E.message)}` : ""}<br>
     Programme(s) : ${bins}<br>Réseau : ${E.model ? `<code>${esc(E.model)}</code>` : "aucun"}`;
+}
+function fillNetworks(E) {
+  const sel = field("katago.network");
+  const keep = sel.value;
+  const nets = E.networks || [];
+  const name = (k) => (nets.find((n) => n.key === k) || {}).label || k;
+  const mb = (n) => `${Math.max(1, Math.round(n.size / 1e6))} Mo`;
+  sel.innerHTML = `<option value="auto">Automatique (conseillé ici : ${esc(name(E.suggested))})</option>` +
+    nets.map((n) => `<option value="${n.key}">${esc(n.label)} : ${esc(n.desc)}${n.installed ? "" : ` (à télécharger, ${mb(n)})`}</option>`).join("");
+  if (keep) sel.value = keep;
+  const used = E.network === "custom" ? "réseau personnel" : E.network ? name(E.network) : "aucun";
+  $("#network-hint").textContent = `Conseillé : ${name(E.suggested)} (${E.suggestion}). En service : ${used}.`;
 }
 function showTab(tab) {
   document.querySelectorAll("#settings-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
@@ -939,7 +952,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
   const patch = {
     ai: { provider: field("ai.provider").value, preset: field("ai.preset").value, base_url: field("ai.base_url").value.trim(),
           model: field("ai.model").value.trim(), api_key: field("ai.api_key").value.trim() },
-    katago: { backend: field("katago.backend").value, live_visits: num("katago.live_visits"), review_visits: num("katago.review_visits"),
+    katago: { backend: field("katago.backend").value, network: field("katago.network").value, live_visits: num("katago.live_visits"), review_visits: num("katago.review_visits"),
               binary: field("katago.binary").value.trim(), model: field("katago.model").value.trim() },
     ogs: { username: field("ogs.username").value.trim(), auto_sync: field("ogs.auto_sync").checked, sync_count: num("ogs.sync_count") || 30 },
     sources: { conquest: mode === "auto" ? "auto" : mode === "off" ? "" : field("sources.conquest_path").value.trim(),
@@ -1053,7 +1066,7 @@ function connect() {
   });
   es.addEventListener("engine", (e) => {
     renderEngine(JSON.parse(e.data));
-    if (!$("#settings-modal").classList.contains("hidden")) renderEngineInfo();
+    if (!$("#settings-modal").classList.contains("hidden")) { renderEngineInfo(); fillNetworks(ENGINE); }
   });
   es.addEventListener("notes", (e) => {
     notes = JSON.parse(e.data);

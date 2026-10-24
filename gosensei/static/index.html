@@ -178,6 +178,10 @@
             <option value="cpu">Processeur</option>
           </select>
         </label>
+        <label>Réseau de neurones
+          <select name="katago.network"></select>
+        </label>
+        <p id="network-hint" class="muted small-text"></p>
         <label>Profondeur de l'analyse en direct (visites, 0 = auto)
           <input name="katago.live_visits" type="number" min="0" step="100">
         </label>
@@ -187,7 +191,7 @@
         <label>KataGo personnel (optionnel)
           <input name="katago.binary" placeholder="/chemin/vers/katago">
         </label>
-        <label>Réseau de neurones personnel (optionnel)
+        <label>Réseau de neurones personnel (optionnel, remplace le choix ci-dessus)
           <input name="katago.model" placeholder="/chemin/vers/reseau.bin.gz">
         </label>
         <div class="row">

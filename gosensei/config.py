@@ -20,7 +20,8 @@ DEFAULTS = {
     "katago": {
         "backend": "auto",      # auto | gpu | cpu
         "binary": "",           # chemin d'un KataGo personnel (optionnel)
-        "model": "",            # chemin d'un réseau .bin.gz personnel (optionnel)
+        "network": "auto",      # auto | b6 | b10 | b15 | b18 (voir katago.NETWORKS)
+        "model": "",            # chemin d'un réseau .bin.gz personnel (optionnel, prioritaire)
         "live_visits": 0,       # 0 = automatique selon la taille du plateau
         "review_visits": 0,
     },
