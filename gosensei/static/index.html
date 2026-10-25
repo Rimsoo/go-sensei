@@ -205,8 +205,8 @@
           <input name="ogs.username" placeholder="ton pseudo sur online-go.com">
         </label>
         <label class="check"><input type="checkbox" name="ogs.auto_sync"> Récupérer mes nouvelles parties OGS au lancement</label>
-        <label>Nombre de parties à récupérer
-          <input name="ogs.sync_count" type="number" min="5" max="500" step="5">
+        <label>Nombre de parties à récupérer (les plus récentes, 0 = toutes)
+          <input name="ogs.sync_count" type="number" min="0" step="10">
         </label>
         <label>The Conquest of Go
           <select name="sources.conquest_mode">

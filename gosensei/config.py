@@ -8,7 +8,10 @@ import shutil
 
 from . import paths
 
+CONFIG_VERSION = 2
+
 DEFAULTS = {
+    "config_version": CONFIG_VERSION,
     "port": 8765,
     "open_window": True,        # ouvrir l'interface au lancement
     "launch": {
@@ -30,7 +33,7 @@ DEFAULTS = {
         "conquest": "auto",     # auto = détection, "" = désactivé, sinon chemin
         "folders": [],          # autres dossiers de fichiers SGF
     },
-    "ogs": {"username": "", "sync_count": 30, "auto_sync": True},
+    "ogs": {"username": "", "sync_count": 0, "auto_sync": True},  # sync_count : 0 = toutes les parties
     "ai": {
         "provider": "none",     # none | claude-code | anthropic | openai
         "preset": "",           # pour openai : openai, deepseek, ollama, openrouter, mistral, gemini, custom
@@ -92,6 +95,10 @@ class Config:
         if first_run:
             self._first_run()
         self._migrate_api_key()
+        if not first_run and data.get("config_version", 1) < 2 and self.data["ogs"]["sync_count"] == 30:
+            # 30 était l'ancien défaut : les parties plus anciennes n'étaient jamais importées.
+            self.data["ogs"]["sync_count"] = 0
+        self.data["config_version"] = CONFIG_VERSION
         self.save()
 
     def _migrate_api_key(self):

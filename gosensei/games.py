@@ -219,14 +219,15 @@ class Library:
         return self._entry(path, "ogs", "OGS")["id"]
 
     def ogs_sync(self, username=None, count=None):
-        """Importe les dernières parties terminées d'un joueur. Retourne (pseudo exact, nb nouvelles)."""
+        """Importe les parties terminées d'un joueur (les `count` plus récentes, 0 = toutes).
+        Retourne (pseudo exact, nb nouvelles)."""
         username = username or self.ogs_username
         if not username:
             raise ValueError("aucun pseudo OGS configuré")
-        count = int(count or self.cfg["ogs"]["sync_count"] or 30)
+        count = int(count if count is not None else self.cfg["ogs"]["sync_count"] or 0) or float("inf")
         with self.sync_lock:
             player = self.ogs_find_player(username)
-            url = f"{OGS}/api/v1/players/{player['id']}/games/?ordering=-ended&page_size={min(count, 50)}"
+            url = f"{OGS}/api/v1/players/{player['id']}/games/?ordering=-ended&page_size=50"
             new = 0
             seen = 0
             while url and seen < count:

@@ -960,7 +960,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
           model: field("ai.model").value.trim(), api_key: field("ai.api_key").value.trim() },
     katago: { backend: field("katago.backend").value, network: field("katago.network").value, live_visits: num("katago.live_visits"), review_visits: num("katago.review_visits"),
               binary: field("katago.binary").value.trim(), model: field("katago.model").value.trim() },
-    ogs: { username: field("ogs.username").value.trim(), auto_sync: field("ogs.auto_sync").checked, sync_count: num("ogs.sync_count") || 30 },
+    ogs: { username: field("ogs.username").value.trim(), auto_sync: field("ogs.auto_sync").checked, sync_count: num("ogs.sync_count") },
     sources: { conquest: mode === "auto" ? "auto" : mode === "off" ? "" : field("sources.conquest_path").value.trim(),
                folders: field("sources.folders").value.split("\n").map((x) => x.trim()).filter(Boolean) },
     launch: { mode: field("launch.mode").value, background: field("launch.background").checked,
