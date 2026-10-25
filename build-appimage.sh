@@ -53,15 +53,22 @@ cp appimage/gosensei.desktop appimage/gosensei.png appimage/entrypoint.sh "$RECE
 printf '%s\n' "$PROJET[anthropic,tray]" > "$RECETTE/requirements.txt"
 
 echo "== construction (Python $PYVER manylinux)"
-rm -f GoSensei-x86_64.AppImage
 # python-appimage prépare seulement le dossier de l'application (--no-packaging) :
 # laissé à lui-même, son appimagetool télécharge le runtime AppImage depuis GitHub
 # et ce téléchargement peut se figer indéfiniment. On assemble nous-mêmes plus bas,
 # avec un runtime récupéré par curl et gardé en cache.
-( cd "$TRAVAIL" && "$PROJET/$VENV/bin/python" -m python_appimage build app --no-packaging -p "$PYVER" "$RECETTE" )
+# Il interroge l'API GitHub à chaque construction : on retente en cas de coupure réseau.
+for essai in 1 2 3; do
+    ( cd "$TRAVAIL" && "$PROJET/$VENV/bin/python" -m python_appimage build app --no-packaging -p "$PYVER" "$RECETTE" ) && break
+    [ "$essai" = 3 ] && { echo "python-appimage a échoué 3 fois (réseau ?)" >&2; exit 1; }
+    echo "   échec, nouvel essai dans 10 s" >&2; rm -rf "$TRAVAIL"/*; sleep 10
+done
 APPDIR="$TRAVAIL/GoSensei-$(uname -m)"
 [ -x "$APPDIR/AppRun" ] || { echo "python-appimage n'a pas produit $APPDIR" >&2; exit 1; }
-OUT="./GoSensei-x86_64.AppImage"
+# Construite à part : l'AppImage en place (celle que lance install.sh) n'est remplacée
+# qu'une fois la nouvelle terminée et vérifiée, jamais cassée par un build raté.
+OUT="$TRAVAIL/GoSensei-x86_64.AppImage"
+FINAL="./GoSensei-x86_64.AppImage"
 
 telecharger() {  # url fichier
     [ -s "$2" ] || { echo "   téléchargement de $(basename "$2")"; curl -fsSL --retry 3 -o "$2.part" "$1" && mv "$2.part" "$2"; }
@@ -110,7 +117,8 @@ echo "== vérification de l'image"
 if "$OUT" --appimage-extract-and-run --python -c "import gosensei.server, anthropic, dbus_fast" >/dev/null 2>&1; then
     echo "   Go Sensei, SDK Anthropic et icône de notification : OK"
 else
-    echo "   ATTENTION : Go Sensei ne s'importe pas dans l'image" >&2
+    echo "   ÉCHEC : Go Sensei ne s'importe pas dans l'image, l'AppImage en place est conservée" >&2
+    exit 1
 fi
 if [ "$BUNDLE_KATAGO" != "0" ]; then
     "$OUT" --appimage-extract-and-run --python -c "
@@ -118,6 +126,8 @@ import os; from gosensei import paths
 d = paths.bundled_katago_dir(); print('   KataGo embarqué :', d and sorted(os.listdir(d)))"
 fi
 
+mv -f "$OUT" "$FINAL"
+OUT="$FINAL"
 echo
 echo "== terminé : $OUT ($(du -h "$OUT" | cut -f1))"
 echo "   lancer        :  $OUT"

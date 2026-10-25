@@ -54,6 +54,12 @@ OPENAI_PRESETS = {
 ANTHROPIC_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 MAX_TOOL_ROUNDS = 25
 
+# Relance envoyée (une fois) quand le modèle a noté une leçon dans le carnet sans l'expliquer :
+# il rédige parfois l'explication dans sa réflexion, que l'élève ne voit pas.
+EXPLAIN_FOLLOWUP = ("[Message automatique de l'appli, pas de l'élève] Ta réponse visible ne contient pas "
+                    "d'explication : l'élève ne voit ni ta réflexion ni la note du carnet. Écris-lui maintenant, "
+                    "directement, la réponse que tu voulais lui donner, sans redire que tu as noté dans le carnet.")
+
 
 def key_slot(ai_cfg):
     """Emplacement de la clé d'API : une clé par service, jamais envoyée à un autre."""
@@ -188,8 +194,21 @@ class Coach:
         self.history.append({"role": "user", "text": text})
         self.turn = {"role": "assistant", "text": "", "tools": []}
         self.turn_game = self.game_id
+        self.followed_up = False
         self.history.append(self.turn)
         self.broadcast("chat", {"kind": "start"})
+
+    def needs_explanation(self):
+        """Une note a été prise ce tour-ci mais presque rien n'a été écrit pour l'élève :
+        renvoie True une seule fois (l'appelant relance alors le modèle avec EXPLAIN_FOLLOWUP)."""
+        t = self.turn
+        if self.followed_up or not t or "save_student_note" not in t["tools"] or len(t["text"].strip()) >= 300:
+            return False
+        self.followed_up = True
+        self.log("IA : note prise sans explication, relance du modèle")
+        if t["text"].strip():
+            self.emit_text("\n\n")
+        return True
 
     # ------------------------------------------------------------ interface
     def send(self, text, context, rich_context=None):
@@ -287,6 +306,10 @@ class ClaudeCodeCoach(Coach):
                 elif e.get("type") == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use":
                     self.emit_tool(e["content_block"].get("name", "").replace("mcp__gosensei__", ""))
             elif t == "result":
+                if not ev.get("is_error") and self.needs_explanation():
+                    with self.lock:
+                        self._write({"type": "user", "message": {"role": "user", "content": EXPLAIN_FOLLOWUP}})
+                    continue
                 if any("No conversation found" in e for e in ev.get("errors") or []):
                     # Session absente de cette machine (données copiées d'un autre PC,
                     # historique de Claude Code effacé…) : on repart d'une conversation neuve.
@@ -402,11 +425,15 @@ class ApiCoach(Coach):
         # partie pendant la réponse, on n'écrit pas dans la conversation de l'autre partie).
         try:
             self.user_turn(msgs, content)
-            for _ in range(MAX_TOOL_ROUNDS):
-                if self.cancel.is_set():
-                    return self.finish("(interrompu)")
-                if not self.assistant_turn(msgs):
+            while True:
+                for _ in range(MAX_TOOL_ROUNDS):
+                    if self.cancel.is_set():
+                        return self.finish("(interrompu)")
+                    if not self.assistant_turn(msgs):
+                        break
+                if self.cancel.is_set() or not self.needs_explanation():
                     break
+                self.user_turn(msgs, EXPLAIN_FOLLOWUP)
             self.finish("(interrompu)" if self.cancel.is_set() else None)
         except Exception as e:
             self.log(f"IA : {e!r}")
