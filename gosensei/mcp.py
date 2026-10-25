@@ -118,7 +118,7 @@ class Tools:
              "description": "Lit le carnet de l'élève : niveau, faiblesses récurrentes, progrès, notes des séances précédentes.",
              "inputSchema": {"type": "object", "properties": {}}},
             {"name": "save_student_note",
-             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi.",
+             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi. Ce n'est PAS un moyen de répondre : la note est un court résumé, l'explication complète va dans ton message.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
         ]
 
@@ -338,7 +338,8 @@ class Tools:
                 self.on_note(note)
             except Exception:
                 pass
-        return "Note enregistrée (l'élève la voit sous ton message et dans son carnet)."
+        return ("Note enregistrée dans le carnet. Elle ne remplace pas ta réponse : l'élève ne voit que le texte "
+                "de ton message, pas ta réflexion. Si tu n'as pas encore écrit ton explication complète, écris-la maintenant.")
 
 
 def handle_rpc(tools, msg):
