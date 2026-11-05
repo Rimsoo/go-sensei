@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  checks:
+    name: Checks (Python ${{ matrix.python }})
+    runs-on: docker
+    strategy:
+      matrix:
+        python: ['3.10', '3.13']   # oldest supported + current
+    container:
+      image: python:${{ matrix.python }}-bookworm
+    steps:
+      - name: Checkout
+        run: |
+          git clone "${{ github.server_url }}/${{ github.repository }}.git" .
+          git checkout -q "${{ github.sha }}"
+
+      - name: Install
+        run: pip install --quiet ".[anthropic,tray]"
+
+      - name: Byte-compile
+        run: python -m compileall -q gosensei
+
+      - name: Import every module
+        run: |
+          python - <<'PY'
+          import importlib, pkgutil, gosensei
+          for m in pkgutil.walk_packages(gosensei.__path__, "gosensei."):
+              importlib.import_module(m.name)
+              print("ok", m.name)
+          PY
