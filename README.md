@@ -93,7 +93,7 @@ Vivaldi), automatic shutdown when the window closes, and start with the session.
 ## From source
 
 ```sh
-git clone https://github.com/Rimsoo/go-sensei && cd go-sensei
+git clone https://forgejo.aaaoz.fr/Rimso/go-sensei.git && cd go-sensei
 python3 go-sensei.py              # Python ≥ 3.10, no required dependencies
 pip install anthropic             # only for the "Anthropic API" provider
 ./build-appimage.sh               # builds the AppImage (BUNDLE_KATAGO=0 for a light build)
