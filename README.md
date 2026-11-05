@@ -1,5 +1,9 @@
 # Go Sensei
 
+> [!NOTE]
+> Dépôt principal : [Forgejo](https://forgejo.aaaoz.fr/Rimso/go-sensei) · Miroir : [GitHub](https://github.com/Rimsoo/go-sensei) (synchronisé automatiquement).
+> Les issues et retours sont les bienvenus sur GitHub.
+
 **Plateau d'analyse KataGo + professeur IA qui t'explique le *pourquoi*, dans la même fenêtre.**
 
 Tu connais les règles du Go mais tu ne comprends pas pourquoi l'IA trouve ton coup mauvais ? Go Sensei
