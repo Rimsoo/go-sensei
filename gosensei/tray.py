@@ -11,6 +11,7 @@ import threading
 import zlib
 
 from . import paths
+from .i18n import tr
 
 try:
     from dbus_fast import Variant
@@ -159,7 +160,7 @@ if AVAILABLE:
 
         def _item(self, iid, label):
             props = {"type": Variant("s", "separator")} if label is None else {
-                "label": Variant("s", label), "enabled": Variant("b", True), "visible": Variant("b", True)}
+                "label": Variant("s", tr(label)), "enabled": Variant("b", True), "visible": Variant("b", True)}
             return Variant("(ia{sv}av)", [iid, props, []])
 
         @dbus_property(access=PropertyAccess.READ)
@@ -196,7 +197,7 @@ if AVAILABLE:
         def GetProperty(self, iid: "i", name: "s") -> "v":
             for i, label in self.ITEMS:
                 if i == iid and label is not None and name == "label":
-                    return Variant("s", label)
+                    return Variant("s", tr(label))
             return Variant("s", "")
 
         @method()

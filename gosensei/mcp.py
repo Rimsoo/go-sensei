@@ -54,6 +54,9 @@ class Tools:
         # vers chaque position expliquée, pour que l'élève puisse y revenir.
         self.on_node = None
         self.on_note = None  # appelé avec le texte d'une note ajoutée au carnet
+        # Appelé avec le texte d'une note avant de l'enregistrer : renvoie un message de refus
+        # (par exemple une note dans une autre langue que la conversation), ou None.
+        self.check_note = None
 
     def _shown(self):
         if self.on_node and self.s.game:
@@ -118,7 +121,7 @@ class Tools:
              "description": "Lit le carnet de l'élève : niveau, faiblesses récurrentes, progrès, notes des séances précédentes.",
              "inputSchema": {"type": "object", "properties": {}}},
             {"name": "save_student_note",
-             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi. Ce n'est PAS un moyen de répondre : la note est un court résumé, l'explication complète va dans ton message.",
+             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi. Ce n'est PAS un moyen de répondre : la note est un court résumé, l'explication complète va dans ton message. Rédige la note dans la MÊME langue que ta réponse à l'élève, quelle que soit la langue des notes déjà présentes.",
              "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
         ]
 
@@ -328,6 +331,10 @@ class Tools:
 
     def t_save_student_note(self, note):
         note = clean_note(note)
+        if self.check_note:
+            refusal = self.check_note(note)
+            if refusal:
+                return refusal
         new = not os.path.exists(self.notes_path)
         with open(self.notes_path, "a", encoding="utf-8") as f:
             if new:

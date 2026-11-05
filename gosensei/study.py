@@ -11,6 +11,7 @@ import threading
 import time
 
 from . import paths
+from .i18n import tr
 from .katago import STOPPED
 from .board import Board, IllegalMove, from_gtp, other, to_gtp
 
@@ -249,7 +250,7 @@ class Study:
         with self.lock:
             nid = int(nid)
             if nid not in self.nodes:
-                raise KeyError(f"position inconnue : {nid}")
+                raise KeyError(tr("position inconnue : {nid}", nid=nid))
             self.current = nid
         self.changed()
 
@@ -319,7 +320,7 @@ class Study:
             nid = int(nid)
             n = self.nodes.get(nid)
             if not n or n.main:
-                raise ValueError("on ne peut supprimer que des variantes")
+                raise ValueError(tr("on ne peut supprimer que des variantes"))
             stack, doomed = [nid], set()
             while stack:
                 i = stack.pop()

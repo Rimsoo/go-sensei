@@ -12,6 +12,7 @@ import urllib.parse
 import urllib.request
 
 from . import paths
+from .i18n import tr
 from .sgf import parse_sgf
 
 OGS = "https://online-go.com"
@@ -163,7 +164,7 @@ class Library:
     def load(self, gid):
         e = self.get(gid)
         if not e:
-            raise KeyError(f"partie inconnue : {gid}")
+            raise KeyError(tr("partie inconnue : {gid}", gid=gid))
         with open(e["path"], encoding="utf-8", errors="replace") as f:
             g = parse_sgf(f.read())
         title = f"{g['black']} vs {g['white']}"
@@ -190,8 +191,9 @@ class Library:
         if exact:
             return exact[0]
         if players:
-            raise ValueError(f"joueur OGS introuvable : {name} (vouliez-vous dire {', '.join(p['username'] for p in players[:3])} ?)")
-        raise ValueError(f"joueur OGS introuvable : {name}")
+            raise ValueError(tr("joueur OGS introuvable : {name} (vouliez-vous dire {suggest} ?)",
+                                name=name, suggest=", ".join(p["username"] for p in players[:3])))
+        raise ValueError(tr("joueur OGS introuvable : {name}", name=name))
 
     def _ogs_save(self, gid, meta=None):
         path = os.path.join(paths.OGS_DIR, f"ogs-{gid}.sgf")
@@ -199,7 +201,7 @@ class Library:
         if new:
             sgf = _http_text(f"{OGS}/api/v1/games/{gid}/sgf")
             if "(;" not in sgf:
-                raise ValueError(f"OGS n'a pas renvoyé de SGF pour la partie {gid}")
+                raise ValueError(tr("OGS n'a pas renvoyé de SGF pour la partie {gid}", gid=gid))
             with open(path, "w", encoding="utf-8") as f:
                 f.write(sgf)
         meta_path = path[:-4] + ".json"
@@ -223,7 +225,7 @@ class Library:
         Retourne (pseudo exact, nb nouvelles)."""
         username = username or self.ogs_username
         if not username:
-            raise ValueError("aucun pseudo OGS configuré")
+            raise ValueError(tr("aucun pseudo OGS configuré"))
         count = int(count if count is not None else self.cfg["ogs"]["sync_count"] or 0) or float("inf")
         with self.sync_lock:
             player = self.ogs_find_player(username)

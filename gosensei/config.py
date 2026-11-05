@@ -13,6 +13,7 @@ CONFIG_VERSION = 2
 DEFAULTS = {
     "config_version": CONFIG_VERSION,
     "port": 8765,
+    "ui": {"lang": "auto"},     # auto (langue du système) | fr | en
     "open_window": True,        # ouvrir l'interface au lancement
     "launch": {
         "mode": "browser",      # browser = navigateur par défaut ; app = fenêtre Chromium dédiée

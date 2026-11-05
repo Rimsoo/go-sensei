@@ -23,7 +23,9 @@ const gtpToXY = (s, size) => {
 const xyToGtp = (x, y, size) => LETTERS[x] + (size - y);
 const pov = (v, c) => (v == null ? null : c === "B" ? v : -v);
 const fmt = (v) => (v == null ? "?" : (v >= 0 ? "+" : "−") + Math.abs(v).toFixed(1));
-const colorName = (c) => (c === "B" ? "Noir" : "Blanc");
+const colorName = (c) => t(c === "B" ? "Noir" : "Blanc");
+const levelName = (l) => t(l);
+const plural = (n) => (LANG === "en" ? n !== 1 : n > 1); // 0 prend le pluriel en anglais, pas en français
 const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 function el(tag, attrs = {}, parent) {
@@ -46,7 +48,7 @@ const MARK_COLORS = { red: "#e0453c", green: "#2fa86b", blue: "#3d7fe0", yellow:
 async function post(path, body = {}) {
   const r = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Go-Sensei": "1" }, body: JSON.stringify(body) });
   const j = await r.json().catch(() => ({}));
-  if (!r.ok || j.error) { toast(j.error || `Erreur ${r.status}`); throw new Error(j.error); }
+  if (!r.ok || j.error) { toast(j.error || t("Erreur {status}", { status: r.status })); throw new Error(j.error); }
   return j;
 }
 
@@ -248,21 +250,21 @@ function scoreAt(t) {
 
 function renderInfo() {
   const g = S.game;
-  $("#game-title").textContent = g ? `${g.black} vs ${g.white} · ${g.size}×${g.size} · komi ${g.komi}${g.result ? " · " + g.result : ""}` : "Aucune partie";
+  $("#game-title").textContent = g ? `${g.black} vs ${g.white} · ${g.size}×${g.size} · komi ${g.komi}${g.result ? " · " + g.result : ""}` : t("Aucune partie");
   if (S.engine) renderEngine(S.engine);
   if (!g) return;
   for (const c of ["B", "W"]) {
     const p = $("#pl-" + c);
     p.querySelector(".name").textContent = c === "B" ? g.black : g.white;
-    p.querySelector(".caps").textContent = `${S.captures[c]} prisonnier${S.captures[c] > 1 ? "s" : ""}`;
+    p.querySelector(".caps").textContent = t(plural(S.captures[c]) ? "{n} prisonniers" : "{n} prisonnier", { n: S.captures[c] });
     p.classList.toggle("student", g.student === c);
     p.classList.toggle("toplay", S.toPlay === c);
   }
   const total = S.main.length;
   const mn = $("#movenum");
   mn.innerHTML = S.inVariation
-    ? `Coup <b>${S.moveNumber}</b> <span class="muted">(variante depuis le coup ${S.cursor})</span>`
-    : `Coup <b>${S.moveNumber}</b> / ${total}${S.lastPass ? " · passe" : ""}`;
+    ? t('Coup <b>{n}</b> <span class="muted">(variante depuis le coup {from})</span>', { n: S.moveNumber, from: S.cursor })
+    : t("Coup <b>{n}</b> / {total}", { n: S.moveNumber, total }) + (S.lastPass ? t(" · passe") : "");
   $("#btn-main").classList.toggle("hidden", !S.inVariation);
 
   // Barre d'évaluation
@@ -270,25 +272,27 @@ function renderInfo() {
   const wr = a && a.winrate != null ? a.winrate : null;
   const sc = a && a.score != null ? a.score : (S.lineEvals || [])[S.moveNumber];
   $("#evalbar .fill").style.width = `${(wr != null ? wr : 0.5) * 100}%`;
-  $("#evalbar .label").textContent = sc == null ? "…" : `${sc >= 0 ? "Noir" : "Blanc"} +${Math.abs(sc).toFixed(1)}`;
+  $("#evalbar .label").textContent = sc == null ? "…" : `${colorName(sc >= 0 ? "B" : "W")} +${Math.abs(sc).toFixed(1)}`;
 
   // Résumé + coups suggérés
   const sum = $("#an-summary"), list = $("#an-moves");
   list.innerHTML = "";
   if (!a) {
-    sum.innerHTML = `<span class="muted">Analyse en cours…</span>`;
+    sum.innerHTML = `<span class="muted">${t("Analyse en cours…")}</span>`;
     $("#an-visits").textContent = "";
   } else {
     const c = a.toPlay;
-    $("#an-visits").textContent = `${a.visits} visites${a.final ? "" : "…"}`;
-    let html = `Au trait : <b>${colorName(c)}</b> · ${Math.abs(a.score) < 0.5 ? "équilibré" : `<b>${a.score > 0 ? "Noir" : "Blanc"}</b> mène de ${Math.abs(a.score).toFixed(1)} pts`} · victoire Noir ${(a.winrate * 100).toFixed(0)}%`;
+    $("#an-visits").textContent = t("{n} visites", { n: a.visits }) + (a.final ? "" : "…");
+    let html = t("Au trait : <b>{color}</b>", { color: colorName(c) }) + " · "
+      + (Math.abs(a.score) < 0.5 ? t("équilibré") : t("<b>{color}</b> mène de {pts} pts", { color: colorName(a.score > 0 ? "B" : "W"), pts: Math.abs(a.score).toFixed(1) }))
+      + " · " + t("victoire Noir {pct}%", { pct: (a.winrate * 100).toFixed(0) });
     if (!S.inVariation && S.moveNumber < S.main.length) {
       const before = scoreAt(S.moveNumber), after = scoreAt(S.moveNumber + 1);
       const mc = S.mainColors[S.moveNumber];
       if (before != null && after != null) {
         const loss = (before - after) * (mc === "B" ? 1 : -1);
-        html += `<br><span class="muted">Coup joué ensuite dans la partie (cercle bleu) :</span> <b>${S.main[S.moveNumber]}</b> `
-          + `<span style="color:${lossColor(loss)}">${loss > 0.05 ? "−" + loss.toFixed(1) + " pts" : "bon coup"}</span>`;
+        html += `<br><span class="muted">${t("Coup joué ensuite dans la partie (cercle bleu) :")}</span> <b>${S.main[S.moveNumber]}</b> `
+          + `<span style="color:${lossColor(loss)}">${loss > 0.05 ? "−" + loss.toFixed(1) + " pts" : t("bon coup")}</span>`;
       }
     }
     sum.innerHTML = html;
@@ -299,7 +303,7 @@ function renderInfo() {
       const d = document.createElement("div");
       d.className = "an-move";
       d.innerHTML = `<span class="dot" style="background:${lossColor(best - sc2)}"></span><span class="mv">${mv.move}</span><span class="sc">${fmt(sc2)} · ${(pov(mv.winrate - 0.5, c) * 100 + 50).toFixed(0)}%</span>`;
-      d.title = "Survol : voir la suite · Clic : jouer ce coup";
+      d.title = t("Survol : voir la suite · Clic : jouer ce coup");
       d.dataset.move = mv.move; // survol et clic gérés par délégation sur #an-moves (voir plus bas)
       list.appendChild(d);
     });
@@ -309,9 +313,9 @@ function renderInfo() {
   const nMine = S.review ? S.review.mistakes.filter((m) => !g.student || m.color === g.student).length : 0;
   const lead = a && a.score != null ? a.score : null;
   $("#an-head-summary").textContent = [
-    lead == null ? "" : Math.abs(lead) < 0.5 ? "équilibré" : `${lead > 0 ? "Noir" : "Blanc"} +${Math.abs(lead).toFixed(1)}`,
-    a && a.moves.length ? `meilleur : ${a.moves[0].move}` : "",
-    S.review ? `${nMine} erreur${nMine > 1 ? "s" : ""}` : "",
+    lead == null ? "" : Math.abs(lead) < 0.5 ? t("équilibré") : `${colorName(lead > 0 ? "B" : "W")} +${Math.abs(lead).toFixed(1)}`,
+    a && a.moves.length ? t("meilleur : {move}", { move: a.moves[0].move }) : "",
+    S.review ? t(plural(nMine) ? "{n} erreurs" : "{n} erreur", { n: nMine }) : "",
   ].filter(Boolean).join(" · ");
 
   // Erreurs
@@ -320,17 +324,18 @@ function renderInfo() {
   const r = S.review;
   const st = $("#review-status");
   if (!r) st.textContent = "";
-  else if (r.status === "done") st.textContent = "revue terminée";
-  else if (r.status === "error") st.textContent = "revue : erreur";
-  else st.textContent = `revue KataGo : ${r.done}/${r.total}`;
+  else if (r.status === "done") st.textContent = t("revue terminée");
+  else if (r.status === "error") st.textContent = t("revue : erreur");
+  else st.textContent = t("revue KataGo : {done}/{total}", { done: r.done, total: r.total });
   if (r) {
     const mine = r.mistakes.filter((m) => !g.student || m.color === g.student);
-    if (!mine.length) box.innerHTML = `<span class="muted small-text">${r.status === "done" ? "Aucune erreur notable 🎉" : "Analyse de la partie en cours…"}</span>`;
+    if (!mine.length) box.innerHTML = `<span class="muted small-text">${t(r.status === "done" ? "Aucune erreur notable 🎉" : "Analyse de la partie en cours…")}</span>`;
     for (const m of mine) {
       const b = document.createElement("button");
       b.className = `mistake ${m.level}` + (S.moveNumber === m.move_number - 1 && !S.inVariation ? " current" : "");
       b.textContent = `${m.move_number}. ${m.played} −${m.loss.toFixed(1)}`;
-      b.title = `${colorName(m.color)} a joué ${m.played} (${m.level}, −${m.loss} pts). Mieux : ${m.best}. Clic : position juste avant ce coup.`;
+      b.title = t("{color} a joué {move} ({level}, −{loss} pts). Mieux : {best}. Clic : position juste avant ce coup.",
+        { color: colorName(m.color), move: m.played, level: levelName(m.level), loss: m.loss, best: m.best });
       b.onclick = () => post("/api/goto", { n: m.move_number - 1 });
       box.appendChild(b);
     }
@@ -368,7 +373,7 @@ function renderGraph() {
     for (let t = branch; t < evals.length; t++) {
       if (evals[t] == null) el("circle", { cx: X(t), cy: H / 2, r: 2, fill: "#e8893f88" }, svg); // en cours d'analyse
     }
-    el("text", { x: W - 4, y: 12, fill: "#e8893f", "font-size": 11, "text-anchor": "end" }, svg).textContent = "variante";
+    el("text", { x: W - 4, y: 12, fill: "#e8893f", "font-size": 11, "text-anchor": "end" }, svg).textContent = t("variante");
   }
   const xc = X(S.moveNumber);
   el("line", { x1: xc, y1: 0, x2: xc, y2: H, stroke: "#e7e9ee", "stroke-width": 1.5, "stroke-dasharray": "3 3" }, svg);
@@ -382,8 +387,8 @@ function renderGraph() {
         opacity: branch == null ? 1 : 0.4 }, svg);
     }
   }
-  el("text", { x: 4, y: 12, fill: "#8d94a3", "font-size": 11 }, svg).textContent = `Noir +${maxAbs}`;
-  el("text", { x: 4, y: H - 4, fill: "#8d94a3", "font-size": 11 }, svg).textContent = `Blanc +${maxAbs}`;
+  el("text", { x: 4, y: 12, fill: "#8d94a3", "font-size": 11 }, svg).textContent = t("Noir +{n}", { n: maxAbs });
+  el("text", { x: 4, y: H - 4, fill: "#8d94a3", "font-size": 11 }, svg).textContent = t("Blanc +{n}", { n: maxAbs });
   svg.onclick = (e) => {
     const r = svg.getBoundingClientRect();
     const t = Math.max(0, Math.round(((e.clientX - r.left - 4) / (r.width - 8)) * total));
@@ -455,14 +460,14 @@ function renderTree() {
       el("circle", { cx, cy, r: 6.5, fill: n.c === "B" ? "#111" : "#eee", stroke: ring, "stroke-width": n.main && !lvl ? 1 : 2.5 }, g);
       if (n.marked) el("circle", { cx: cx + 6, cy: cy - 6, r: 2.5, fill: "#9b5de5" }, g);
     }
-    const who = n.src === "sensei" ? " · variante de Sensei" : n.src === "user" ? " · ta variante" : "";
-    el("title", {}, g).textContent = n.c == null ? "Début" : `Coup ${p.x} · ${n.c === "B" ? "Noir" : "Blanc"} ${n.m}${who}`
-      + (n.main ? "" : "\nClic droit : supprimer cette variante");
+    const who = n.src === "sensei" ? t(" · variante de Sensei") : n.src === "user" ? t(" · ta variante") : "";
+    el("title", {}, g).textContent = n.c == null ? t("Début") : t("Coup {n} · {color} {move}{who}", { n: p.x, color: colorName(n.c), move: n.m, who })
+      + (n.main ? "" : t("\nClic droit : supprimer cette variante"));
     el("circle", { cx, cy, r: 10, fill: "transparent" }, g); // zone cliquable
     g.addEventListener("click", () => post("/api/goto-node", { id: n.id }).catch(() => {}));
     g.addEventListener("contextmenu", (e) => {
       e.preventDefault();
-      if (!n.main && confirm("Supprimer cette variante (et sa suite) ?")) post("/api/delete-node", { id: n.id }).catch(() => {});
+      if (!n.main && confirm(t("Supprimer cette variante (et sa suite) ?"))) post("/api/delete-node", { id: n.id }).catch(() => {});
     });
   }
   // Garder la position actuelle visible
@@ -474,7 +479,10 @@ function renderTree() {
     if (y < wrap.scrollTop + 10 || y > wrap.scrollTop + wrap.clientHeight - 10) wrap.scrollTop = y - wrap.clientHeight / 2;
   }
   const nVar = S.tree.filter((n) => !n.main && nodes.get(n.parent) && nodes.get(n.parent).main).length;
-  $("#tree-info").textContent = nVar ? `${nVar} variante${nVar > 1 ? "s" : ""} · bleu = toi, vert = Sensei · clic : y aller · ↑↓ : changer de variante` : "joue un coup sur le plateau pour créer une variante";
+  $("#tree-info").textContent = nVar
+    ? t(plural(nVar) ? "{n} variantes · bleu = toi, vert = Sensei · clic : y aller · ↑↓ : changer de variante"
+      : "{n} variante · bleu = toi, vert = Sensei · clic : y aller · ↑↓ : changer de variante", { n: nVar })
+    : t("joue un coup sur le plateau pour créer une variante");
 }
 
 function render() {
@@ -491,7 +499,7 @@ try { const v = localStorage.getItem("gs-analysis-collapsed"); if (v != null) an
 function applyAnalysisCollapsed() {
   $("#analysis-card").classList.toggle("collapsed", analysisCollapsed);
   $("#an-toggle").textContent = analysisCollapsed ? "▸" : "▾";
-  $("#an-toggle").title = analysisCollapsed ? "Déplier l'analyse" : "Replier l'analyse";
+  $("#an-toggle").title = t(analysisCollapsed ? "Déplier l'analyse" : "Replier l'analyse");
 }
 $("#an-head").addEventListener("click", () => {
   analysisCollapsed = !analysisCollapsed;
@@ -585,30 +593,29 @@ function renderChat() {
   const box = $("#messages");
   const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
   box.innerHTML = "";
-  $("#ai-label").textContent = chatInfo.enabled ? `· ${AI_LABELS[chatInfo.provider] || ""}` : "";
+  $("#ai-label").textContent = chatInfo.enabled ? `· ${aiLabel(chatInfo.provider)}` : "";
   for (const id of ["#quick", "#chat-form"]) $(id).classList.toggle("hidden", !chatInfo.enabled);
   if (!chatInfo.enabled) {
-    box.innerHTML = `<div class="chat-disabled"><p><b>Le professeur IA est désactivé.</b></p>
-      <p>Le plateau, l'analyse KataGo et la revue de tes erreurs fonctionnent sans lui.
-      Pour avoir des explications en français, choisis une IA (Claude, ChatGPT, DeepSeek, Ollama…).</p>
+    box.innerHTML = `<div class="chat-disabled"><p><b>${t("Le professeur IA est désactivé.")}</b></p>
+      <p>${t("Le plateau, l'analyse KataGo et la revue de tes erreurs fonctionnent sans lui. Pour avoir des explications en français, choisis une IA (Claude, ChatGPT, DeepSeek, Ollama…).")}</p>
       ${chatInfo.error ? `<p style="color:var(--danger)">${esc(chatInfo.error)}</p>` : ""}
-      <button class="btn primary" onclick="openSettings('ai')">Configurer une IA</button></div>`;
+      <button class="btn primary" onclick="openSettings('ai')">${t("Configurer une IA")}</button></div>`;
     return;
   }
   if (!chat.length) {
-    box.innerHTML = `<div class="empty-chat"><p><b>Pose-moi n'importe quelle question sur la position affichée.</b></p>
-      <p>Je vois le même plateau que toi : je peux jouer des variantes, dessiner dessus et vérifier avec KataGo.</p>
-      <p>Astuce : clique sur une erreur (en haut) pour te placer juste avant, puis demande « pourquoi ? ».</p></div>`;
+    box.innerHTML = `<div class="empty-chat"><p><b>${t("Pose-moi n'importe quelle question sur la position affichée.")}</b></p>
+      <p>${t("Je vois le même plateau que toi : je peux jouer des variantes, dessiner dessus et vérifier avec KataGo.")}</p>
+      <p>${esc(t("Astuce : clique sur une erreur (en haut) pour te placer juste avant, puis demande « pourquoi ? »."))}</p></div>`;
   }
   chat.forEach((m, i) => {
     const d = document.createElement("div");
     d.className = "msg " + m.role + (busy && i === chat.length - 1 && m.role === "assistant" ? " thinking" : "");
     if (m.role === "user") d.textContent = m.text;
     else {
-      const tools = (m.tools || []).map((t) => `<span class="tool">🔧 ${TOOL_FR[t] || t}</span>`).join("");
-      const notesHtml = (m.notes || []).map((n) => `<div class="msg-note" title="Ouvrir le carnet">📓 <b>Noté dans ton carnet</b> : ${inline(esc(n))}</div>`).join("");
+      const tools = (m.tools || []).map((tool) => `<span class="tool">🔧 ${TOOL_FR[tool] ? t(TOOL_FR[tool]) : tool}</span>`).join("");
+      const notesHtml = (m.notes || []).map((n) => `<div class="msg-note" title="${t("Ouvrir le carnet")}">📓 <b>${t("Noté dans ton carnet")}</b> : ${inline(esc(n))}</div>`).join("");
       const links = (m.nodes || []).map((n) => `<button class="node-link${S && n.id === S.current ? " active" : ""}" data-node="${n.id}">`
-        + `${n.label.startsWith("variante") ? "🔀" : "📍"} ${esc(n.label)}</button>`).join("");
+        + `${n.label.startsWith("variante") ? "🔀" : "📍"} ${esc(tNodeLabel(n.label))}</button>`).join("");
       d.innerHTML = (tools ? `<div class="tools">${tools}</div>` : "") + `<div class="body">${markdown(m.text || "")}</div>`
         + notesHtml + (links ? `<div class="node-links">${links}</div>` : "");
     }
@@ -643,7 +650,7 @@ $("#an-moves").addEventListener("click", (e) => {
 $("#messages").addEventListener("click", (e) => {
   if (e.target.closest(".msg-note")) return openNotes();
   const b = e.target.closest(".node-link");
-  if (b) post("/api/goto-node", { id: parseInt(b.dataset.node, 10) }).catch(() => toast("Cette position n'existe plus (variante supprimée ?)"));
+  if (b) post("/api/goto-node", { id: parseInt(b.dataset.node, 10) }).catch(() => toast(t("Cette position n'existe plus (variante supprimée ?)")));
 });
 $("#messages").addEventListener("mouseover", (e) => {
   const c = e.target.closest(".coord");
@@ -678,11 +685,11 @@ $("#chat-input").addEventListener("keydown", (e) => {
 });
 $("#quick").addEventListener("click", (e) => { const b = e.target.closest("button"); if (b) sendChat(b.dataset.q); });
 $("#btn-stop").onclick = () => post("/api/chat/stop");
-$("#btn-reset").onclick = () => { if (confirm("Commencer une nouvelle conversation ? (Ton carnet de progression est conservé.)")) post("/api/chat/reset"); };
+$("#btn-reset").onclick = () => { if (confirm(t("Commencer une nouvelle conversation ? (Ton carnet de progression est conservé.)"))) post("/api/chat/reset"); };
 
 // ------------------------------------------------------------------ parties
 let games = [], sizeFilter = "", sourceFilter = "";
-const fmtDate = (t) => new Date(t * 1000).toLocaleString("fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
+const fmtDate = (ts) => new Date(ts * 1000).toLocaleString(LANG === "en" ? "en-GB" : "fr-FR", { day: "2-digit", month: "2-digit", year: "2-digit", hour: "2-digit", minute: "2-digit" });
 
 async function refreshGames() {
   games = await (await fetch("/api/games")).json();
@@ -700,12 +707,12 @@ async function openGames() {
 function renderGames() {
   const sources = [...new Set(games.map((g) => g.folder))];
   const sf = $("#source-filter");
-  sf.innerHTML = ["", ...sources].map((f) => `<button data-src="${esc(f)}" class="${f === sourceFilter ? "active" : ""}">${f ? esc(f) : "Toutes sources"}</button>`).join("");
+  sf.innerHTML = ["", ...sources].map((f) => `<button data-src="${esc(f)}" class="${f === sourceFilter ? "active" : ""}">${f ? esc(t(f)) : t("Toutes sources")}</button>`).join("");
   const q = $("#game-search").value.trim().toLowerCase();
   const list = games.filter((g) => (!sizeFilter || String(g.size) === sizeFilter) && (!sourceFilter || g.folder === sourceFilter)
     && (!q || (g.black + " " + g.white).toLowerCase().includes(q)));
   const box = $("#games-list");
-  box.innerHTML = list.length ? "" : `<p class="muted">Aucune partie.</p>`;
+  box.innerHTML = list.length ? "" : `<p class="muted">${t("Aucune partie")}.</p>`;
   for (const g of list) {
     const d = document.createElement("div");
     d.className = "game-row" + (S && S.game && S.game.id === g.id ? " active" : "");
@@ -714,9 +721,9 @@ function renderGames() {
       const txt = `${c === "B" ? "⚫" : "⚪"} ${esc(n)}${r ? ` <span class="rank">${esc(r)}</span>` : ""}`;
       return g.student === c ? `<b>${txt}</b>` : txt;
     };
-    const outcome = g.outcome ? `<span class="outcome ${g.outcome}">${g.outcome === "win" ? "Victoire" : "Défaite"}</span>` : `<span class="muted small-text">${esc(g.result || "")}</span>`;
+    const outcome = g.outcome ? `<span class="outcome ${g.outcome}">${t(g.outcome === "win" ? "Victoire" : "Défaite")}</span>` : `<span class="muted small-text">${esc(g.result || "")}</span>`;
     d.innerHTML = `<span class="muted">${fmtDate(g.played)}</span><span class="vs">${name("B")} &nbsp;vs&nbsp; ${name("W")}</span>`
-      + `<span>${g.size}×${g.size}</span><span class="muted">${g.moves} coups</span>${outcome}<span class="src">${esc(g.folder)}</span>`;
+      + `<span>${g.size}×${g.size}</span><span class="muted">${t("{n} coups", { n: g.moves })}</span>${outcome}<span class="src">${esc(t(g.folder))}</span>`;
     d.onclick = async () => { await post("/api/load", { id: g.id }); $("#games-modal").classList.add("hidden"); };
     box.appendChild(d);
   }
@@ -735,14 +742,14 @@ $("#source-filter").addEventListener("click", (e) => {
   if (b) { sourceFilter = b.dataset.src; renderGames(); }
 });
 async function ogsImport(query) {
-  $("#ogs-status").textContent = "Import depuis OGS en cours… (peut prendre une minute)";
+  $("#ogs-status").textContent = t("Import depuis OGS en cours… (peut prendre une minute)");
   try {
     const r = await post("/api/ogs", { query });
     games = r.games;
-    $("#ogs-status").textContent = r.username ? `${r.username} : ${r.new} nouvelle(s) partie(s).` : "Partie importée.";
+    $("#ogs-status").textContent = r.username ? t("{user} : {n} nouvelle(s) partie(s).", { user: r.username, n: r.new }) : t("Partie importée.");
     if (r.username) { await loadConfig(); openGames(); } else renderGames();
   } catch {
-    $("#ogs-status").textContent = "Échec de l'import.";
+    $("#ogs-status").textContent = t("Échec de l'import.");
   }
 }
 $("#ogs-form").addEventListener("submit", (e) => {
@@ -755,7 +762,7 @@ $("#btn-sync").onclick = () => ogsImport(CFG.config.ogs.username);
 async function importFiles(files) {
   let last = null;
   for (const f of files) {
-    if (!/\.sgf$/i.test(f.name)) { toast(`${f.name} n'est pas un fichier .sgf`); continue; }
+    if (!/\.sgf$/i.test(f.name)) { toast(t("{name} n'est pas un fichier .sgf", { name: f.name })); continue; }
     try { last = await post("/api/import-sgf", { name: f.name, content: await f.text() }); } catch {}
   }
   if (last) { $("#games-modal").classList.add("hidden"); }
@@ -779,7 +786,7 @@ document.querySelectorAll(".modal").forEach((m) => m.addEventListener("click", (
 
 // ------------------------------------------------------------------ carnet
 let notes = null, notesEditing = false;
-const DAY_FMT = new Intl.DateTimeFormat("fr-FR", { weekday: "long", day: "numeric", month: "long" });
+const dayFmt = () => new Intl.DateTimeFormat(LANG === "en" ? "en-GB" : "fr-FR", { weekday: "long", day: "numeric", month: "long" });
 
 async function openNotes() {
   notes = await (await fetch("/api/notes")).json();
@@ -801,7 +808,7 @@ function renderNotes() {
   const q = $("#notes-search").value.trim().toLowerCase();
   const entries = (notes ? notes.entries : []).filter((e) => !q || e.text.toLowerCase().includes(q));
   if (!entries.length) {
-    box.innerHTML = `<p class="muted">${q ? "Aucune note ne correspond." : "Le carnet est vide : Sensei y notera tes progrès au fil des séances."}</p>`;
+    box.innerHTML = `<p class="muted">${t(q ? "Aucune note ne correspond." : "Le carnet est vide : Sensei y notera tes progrès au fil des séances.")}</p>`;
     return;
   }
   const byDay = new Map();
@@ -811,7 +818,7 @@ function renderNotes() {
   }
   // Les jours les plus récents en premier, les notes dans l'ordre où elles ont été prises
   box.innerHTML = [...byDay.entries()].sort((a, b) => b[0].localeCompare(a[0])).map(([day, list]) => {
-    const title = day ? DAY_FMT.format(new Date(day + "T12:00:00")) : "Sans date";
+    const title = day ? dayFmt().format(new Date(day + "T12:00:00")) : t("Sans date");
     return `<section class="notes-day"><h4>${esc(title)}</h4>` + list.map((e) => `<div class="note">${inline(esc(e.text))}</div>`).join("") + "</section>";
   }).join("");
 }
@@ -840,17 +847,19 @@ function renderEngine(E) {
   $("#btn-install").classList.toggle("hidden", downloading || E.state === "tuning");
   $("#install-progress").classList.toggle("hidden", !downloading);
   $("#install-progress > div").style.width = `${E.progress || 0}%`;
-  setup.querySelector("h3").textContent = E.state === "tuning" ? "Calibrage de la carte graphique…"
-    : E.state === "error" ? "KataGo a un problème" : "Installer le moteur d'analyse";
+  setup.querySelector("h3").textContent = t(E.state === "tuning" ? "Calibrage de la carte graphique…"
+    : E.state === "error" ? "KataGo a un problème" : "Installer le moteur d'analyse");
   $("#engine-msg").textContent = E.state === "tuning"
-    ? "Première utilisation : KataGo optimise ses calculs pour ta carte graphique (1 à 2 minutes, une seule fois)."
+    ? t("Première utilisation : KataGo optimise ses calculs pour ta carte graphique (1 à 2 minutes, une seule fois).")
     : E.message || "";
   // Moteur installé mais qui plante : inutile de parler de téléchargement.
   const installed = E.state === "tuning" || (E.state === "error" && !E.can_install);
   $("#engine-intro").classList.toggle("hidden", installed);
   if (E.state === "error") {
-    $("#btn-install").textContent = "Réessayer";
-    if (installed) $("#engine-msg").textContent += " — ⚙ Réglages → KataGo pour changer de calcul ou de réseau.";
+    $("#btn-install").textContent = t("Réessayer");
+    if (installed) $("#engine-msg").textContent += t(" — ⚙ Réglages → KataGo pour changer de calcul ou de réseau.");
+  } else {
+    $("#btn-install").textContent = t("Télécharger KataGo");
   }
 }
 $("#btn-install").onclick = () => post("/api/engine/install");
@@ -858,11 +867,31 @@ $("#btn-install").onclick = () => post("/api/engine/install");
 // ------------------------------------------------------------------ réglages
 let CFG = null, ENGINE = null;
 const AI_LABELS = { "claude-code": "Claude Code", anthropic: "Claude (API)", openai: "API compatible OpenAI", none: "" };
+const aiLabel = (p) => (AI_LABELS[p] ? t(AI_LABELS[p]) : "");
 
 async function loadConfig() {
   CFG = await (await fetch("/api/config")).json();
+  // La langue retenue par le serveur fait foi : c'est aussi celle des réponses de Sensei.
+  if (CFG.lang && CFG.lang !== LANG) { setLang(CFG.lang); rerenderAll(); }
   return CFG;
 }
+
+// ------------------------------------------------------------------ langue
+function rerenderAll() {
+  applyAnalysisCollapsed();
+  render();
+  renderChat();
+  if (ENGINE) renderEngine(ENGINE);
+  if (!$("#games-modal").classList.contains("hidden")) renderGames();
+  if (!$("#notes-modal").classList.contains("hidden") && !notesEditing) renderNotes();
+  if (CFG && !$("#settings-modal").classList.contains("hidden")) { renderEngineInfo(); updateKeyNote(); }
+}
+$("#opt-lang").addEventListener("change", async (e) => {
+  const lang = e.target.value;
+  setLang(lang);
+  rerenderAll();
+  try { CFG = await post("/api/config", { ui: { lang } }); } catch {}
+});
 function field(name) { return $(`#settings-form [name="${name}"]`); }
 function getPath(obj, path) { return path.split(".").reduce((o, k) => (o ? o[k] : undefined), obj); }
 
@@ -883,13 +912,14 @@ async function openSettings(tab = "ai") {
   const cq = c.sources.conquest;
   field("sources.conquest_mode").value = cq === "auto" ? "auto" : cq ? "path" : "off";
   field("sources.conquest_path").value = cq !== "auto" ? cq : "";
-  $("#conquest-detect").textContent = c.detected.conquest ? `Trouvé : ${c.detected.conquest}` : "Jeu non détecté sur ce PC.";
-  $("#claude-detect").textContent = c.detected.claude_cli ? "✓ commande claude trouvée." : "⚠ commande claude introuvable.";
+  $("#conquest-detect").textContent = c.detected.conquest ? t("Trouvé : {path}", { path: c.detected.conquest }) : t("Jeu non détecté sur ce PC.");
+  $("#claude-detect").textContent = t(c.detected.claude_cli ? "✓ commande claude trouvée." : "⚠ commande claude introuvable.");
   renderEngineInfo();
-  $("#about").innerHTML = `<b>Go Sensei ${esc(CFG.version)}</b><br>Réglages : <code>${esc(CFG.paths.config)}</code><br>
-    Données (revues, parties OGS, carnet de l'élève, KataGo) : <code>${esc(CFG.paths.data)}</code><br><br>
-    Analyse : <a href="https://github.com/lightvector/KataGo" target="_blank">KataGo</a> (licence MIT).
-    Parties en ligne : <a href="https://online-go.com" target="_blank">OGS</a>.`;
+  $("#about").innerHTML = `<b>Go Sensei ${esc(CFG.version)}</b><br>${t("Réglages : <code>{config}</code>", { config: esc(CFG.paths.config) })}<br>
+    ${t("Données (revues, parties OGS, carnet de l'élève, KataGo) : <code>{data}</code>", { data: esc(CFG.paths.data) })}<br><br>
+    ${t("Analyse : {katago} (licence MIT). Parties en ligne : {ogs}.", {
+      katago: '<a href="https://github.com/lightvector/KataGo" target="_blank">KataGo</a>',
+      ogs: '<a href="https://online-go.com" target="_blank">OGS</a>' })}`;
   updateSettingsVisibility();
   showTab(tab);
   $("#settings-status").textContent = "";
@@ -897,21 +927,21 @@ async function openSettings(tab = "ai") {
 }
 function renderEngineInfo() {
   const E = ENGINE || CFG.engine;
-  const bins = Object.entries(E.binaries || {}).map(([k, v]) => `${k} : <code>${esc(v)}</code>`).join("<br>") || "aucun";
-  $("#engine-info").innerHTML = `État : <b>${esc(E.label)}</b>${E.message ? ` — ${esc(E.message)}` : ""}<br>
-    Programme(s) : ${bins}<br>Réseau : ${E.model ? `<code>${esc(E.model)}</code>` : "aucun"}`;
+  const bins = Object.entries(E.binaries || {}).map(([k, v]) => `${k} : <code>${esc(v)}</code>`).join("<br>") || t("aucun");
+  $("#engine-info").innerHTML = t("État : <b>{label}</b>", { label: esc(E.label) }) + (E.message ? ` — ${esc(E.message)}` : "") + "<br>"
+    + t("Programme(s) : {bins}", { bins }) + "<br>" + t("Réseau : {model}", { model: E.model ? `<code>${esc(E.model)}</code>` : t("aucun") });
 }
 function fillNetworks(E) {
   const sel = field("katago.network");
   const keep = sel.value;
   const nets = E.networks || [];
   const name = (k) => (nets.find((n) => n.key === k) || {}).label || k;
-  const mb = (n) => `${Math.max(1, Math.round(n.size / 1e6))} Mo`;
-  sel.innerHTML = `<option value="auto">Automatique (conseillé ici : ${esc(name(E.suggested))})</option>` +
-    nets.map((n) => `<option value="${n.key}">${esc(n.label)} : ${esc(n.desc)}${n.installed ? "" : ` (à télécharger, ${mb(n)})`}</option>`).join("");
+  const mb = (n) => t("{n} Mo", { n: Math.max(1, Math.round(n.size / 1e6)) });
+  sel.innerHTML = `<option value="auto">${esc(t("Automatique (conseillé ici : {name})", { name: name(E.suggested) }))}</option>` +
+    nets.map((n) => `<option value="${n.key}">${esc(n.label)} : ${esc(n.desc)}${n.installed ? "" : esc(t(" (à télécharger, {size})", { size: mb(n) }))}</option>`).join("");
   if (keep) sel.value = keep;
-  const used = E.network === "custom" ? "réseau personnel" : E.network ? name(E.network) : "aucun";
-  $("#network-hint").textContent = `Conseillé : ${name(E.suggested)} (${E.suggestion}). En service : ${used}.`;
+  const used = E.network === "custom" ? t("réseau personnel") : E.network ? name(E.network) : t("aucun");
+  $("#network-hint").textContent = t("Conseillé : {name} ({why}). En service : {used}.", { name: name(E.suggested), why: E.suggestion, used });
 }
 function showTab(tab) {
   document.querySelectorAll("#settings-tabs button").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
@@ -922,8 +952,8 @@ function updateKeyNote() {
   const prov = field("ai.provider").value;
   const slot = prov === "anthropic" ? "anthropic" : prov === "openai" ? (field("ai.preset").value || "custom") : null;
   const has = slot && CFG && (CFG.config.ai.key_slots || []).includes(slot);
-  $("#key-note").textContent = has ? "Une clé est enregistrée pour ce service (laisser vide pour la garder)."
-    : slot ? "Aucune clé enregistrée pour ce service." : "";
+  $("#key-note").textContent = has ? t("Une clé est enregistrée pour ce service (laisser vide pour la garder).")
+    : slot ? t("Aucune clé enregistrée pour ce service.") : "";
 }
 
 function updateSettingsVisibility() {
@@ -942,12 +972,12 @@ field("ai.preset").addEventListener("change", () => {
 });
 $("#btn-models").onclick = async () => {
   const body = { provider: field("ai.provider").value, base_url: field("ai.base_url").value, api_key: field("ai.api_key").value };
-  $("#settings-status").textContent = "Recherche des modèles…";
+  $("#settings-status").textContent = t("Recherche des modèles…");
   try {
     const r = await post("/api/ai/models", body);
     $("#model-list").innerHTML = r.models.map((m) => `<option value="${esc(m)}">`).join("");
-    $("#settings-status").textContent = `${r.models.length} modèle(s) : clique dans le champ Modèle pour choisir.`;
-  } catch { $("#settings-status").textContent = "Impossible de lister les modèles (adresse ou clé ?)."; }
+    $("#settings-status").textContent = t("{n} modèle(s) : clique dans le champ Modèle pour choisir.", { n: r.models.length });
+  } catch { $("#settings-status").textContent = t("Impossible de lister les modèles (adresse ou clé ?)."); }
 };
 $("#btn-engine-restart").onclick = () => post("/api/engine/restart");
 $("#btn-engine-install").onclick = () => post("/api/engine/install");
@@ -968,17 +998,17 @@ $("#settings-form").addEventListener("submit", async (e) => {
   };
   try {
     CFG = await post("/api/config", patch);
-    $("#settings-status").textContent = "✓ Enregistré";
+    $("#settings-status").textContent = t("✓ Enregistré");
     field("ai.api_key").value = "";
     updateKeyNote();
     loadChat();
-  } catch { $("#settings-status").textContent = "Échec de l'enregistrement."; }
+  } catch { $("#settings-status").textContent = t("Échec de l'enregistrement."); }
 });
 $("#btn-settings").onclick = () => openSettings();
 
 // ------------------------------------------------------------------ quitter
 $("#btn-quit").onclick = () => {
-  if (confirm("Quitter Go Sensei ? (KataGo et le professeur IA seront arrêtés)")) post("/api/shutdown").catch(() => {});
+  if (confirm(t("Quitter Go Sensei ? (KataGo et le professeur IA seront arrêtés)"))) post("/api/shutdown").catch(() => {});
 };
 function showShutdown() {
   $("#shutdown").classList.remove("hidden");
@@ -1080,7 +1110,7 @@ function connect() {
   });
   es.addEventListener("games", () => { if (!$("#games-modal").classList.contains("hidden")) refreshGames(); });
   es.addEventListener("shutdown", () => { stopped = true; es.close(); showShutdown(); });
-  es.onerror = () => { if (!stopped) { $("#engine").textContent = "serveur déconnecté…"; $("#engine").classList.remove("ok"); } };
+  es.onerror = () => { if (!stopped) { $("#engine").textContent = t("serveur déconnecté…"); $("#engine").classList.remove("ok"); } };
   es.onopen = loadChat;
 }
 

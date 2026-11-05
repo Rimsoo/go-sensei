@@ -1,13 +1,14 @@
 [build-system]
-requires = ["setuptools>=61"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "go-sensei"
-version = "0.5.4"
+version = "0.6.0"
 description = "Plateau d'analyse KataGo et professeur IA pour apprendre le Go"
 readme = "README.md"
-license = { text = "MIT" }
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.10"
 dependencies = []
 
@@ -21,7 +22,7 @@ tray = ["dbus-fast"]
 go-sensei = "gosensei.__main__:main"
 
 [tool.setuptools]
-packages = ["gosensei"]
+packages = ["gosensei", "gosensei.static", "gosensei.resources"]
 
 [tool.setuptools.package-data]
 gosensei = ["static/*", "resources/*"]

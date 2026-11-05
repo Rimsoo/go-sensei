@@ -12,6 +12,7 @@ import urllib.request
 import zipfile
 
 from . import paths
+from .i18n import tr
 from .config import detect_conquest_model
 
 KATAGO_VERSION = "1.16.3"
@@ -106,13 +107,13 @@ class Engine:
     @property
     def status(self):
         s = self.state
-        label = STATE_LABELS.get(s["state"], s["state"])
+        label = tr(STATE_LABELS.get(s["state"], s["state"]))
         if s["state"] == "downloading" and s["progress"] is not None:
             label += f" {s['progress']:.0f} %"
         if s["state"] == "ready" and s["backend"]:
             label += " (GPU)" if s["backend"] == "opencl" else " (CPU)"
         if s.get("download"):
-            label += f" · téléchargement du réseau {s['download']['progress']:.0f} %"
+            label += tr(" · téléchargement du réseau {p:.0f} %", p=s["download"]["progress"])
         return label
 
     def _set(self, **kw):
@@ -126,7 +127,7 @@ class Engine:
         return dict(self.state, label=self.status, model=model, binaries=self.available_binaries(),
                     can_install=not (model and self.available_binaries()),
                     network=self.network_of(model), suggested=suggested, suggestion=reason,
-                    networks=[dict(key=k, label=n["label"], desc=n["desc"], size=n["size"],
+                    networks=[dict(key=k, label=tr(n["label"]), desc=tr(n["desc"]), size=n["size"],
                                    installed=bool(self.network_path(k))) for k, n in NETWORKS.items()])
 
     # ------------------------------------------------------------ localisation
@@ -174,13 +175,14 @@ class Engine:
     def suggest_network(self, kind):
         """(réseau conseillé, raison) pour le moteur `kind` qui tourne ou va tourner."""
         if kind == "opencl" and self.cfg["katago"].get("small_gpu"):
-            return "b10", "carte graphique modeste : b18 n'y tient pas"
+            return "b10", tr("carte graphique modeste : b18 n'y tient pas")
         if kind in ("opencl", "custom"):
-            return "b18", "carte graphique : le réseau le plus fort reste rapide"
+            return "b18", tr("carte graphique : le réseau le plus fort reste rapide")
         cores = os.cpu_count() or 2
         if kind == "eigenavx2" and cores >= 4:
-            return "b10", f"processeur ({cores} cœurs) : b18 y serait 10 à 15 fois plus lent"
-        return "b6", f"petit processeur ({cores} cœurs{'' if kind == 'eigenavx2' else ', sans AVX2'})"
+            return "b10", tr("processeur ({cores} cœurs) : b18 y serait 10 à 15 fois plus lent", cores=cores)
+        return "b6", tr("petit processeur ({cores} cœurs)" if kind == "eigenavx2"
+                        else "petit processeur ({cores} cœurs, sans AVX2)", cores=cores)
 
     def wanted_network(self, kind):
         choice = self.cfg["katago"].get("network") or "auto"
@@ -317,9 +319,9 @@ class Engine:
         except Exception as e:
             self.log(f"Téléchargement échoué : {e}")
             if background:
-                self._set(download=None, message=f"Téléchargement échoué : {e}")
+                self._set(download=None, message=tr("Téléchargement échoué : {error}", error=e))
             else:
-                self._set(state="error", progress=None, message=f"Téléchargement échoué : {e}")
+                self._set(state="error", progress=None, message=tr("Téléchargement échoué : {error}", error=e))
 
     # ------------------------------------------------------------ process
     def start(self):
@@ -405,8 +407,8 @@ class Engine:
             if self.wake.is_set():  # relance demandée
                 continue
             if not was_ready:
-                self._set(state="error", message="KataGo n'a pas pu démarrer"
-                          + (f" : {self.last_error}" if self.last_error else " (voir le journal)"))
+                self._set(state="error", message=tr("KataGo n'a pas pu démarrer")
+                          + (f" : {self.last_error}" if self.last_error else tr(" (voir le journal)")))
                 self.wake.wait()
                 continue
             self.log("KataGo : arrêt inattendu, relance")
@@ -491,7 +493,7 @@ class Engine:
 
     def query_sync(self, q, timeout=120):
         if not self.ready.wait(timeout):
-            raise TimeoutError(f"KataGo n'est pas prêt ({self.status})")
+            raise TimeoutError(tr("KataGo n'est pas prêt ({status})", status=self.status))
         done = threading.Event()
         result = {}
 
@@ -505,7 +507,7 @@ class Engine:
         ok = done.wait(timeout)
         self.forget(qid)
         if not ok:
-            raise TimeoutError("KataGo n'a pas répondu à temps")
+            raise TimeoutError(tr("KataGo n'a pas répondu à temps"))
         if "error" in result["r"]:
             raise RuntimeError(result["r"]["error"])
         return result["r"]

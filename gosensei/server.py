@@ -10,7 +10,7 @@ import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
-from . import __version__, ai, paths
+from . import __version__, ai, i18n, paths
 from .board import to_gtp
 from .config import Config
 from .games import Library
@@ -69,6 +69,7 @@ class Hub:
 class App:
     def __init__(self, port=None):
         self.cfg = Config()
+        i18n.set_lang(self.cfg["ui"]["lang"])
         self.port = port or self.cfg["port"]
         self.url = f"http://127.0.0.1:{self.port}"
         self.hub = Hub()
@@ -78,6 +79,7 @@ class App:
         self.tools = Tools(self.study, paths.NOTES_FILE)
         self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
         self.tools.on_note = self._on_note
+        self.tools.check_note = lambda note: self.coach.note_language_problem(note)
         # Une conversation par partie : on suit la partie ouverte.
         self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
@@ -230,7 +232,8 @@ class App:
                 "error": getattr(self.coach, "error", None)}
 
     def config_info(self):
-        return {"config": self.cfg.public(), "presets": ai.OPENAI_PRESETS, "anthropic_models": ai.ANTHROPIC_MODELS,
+        presets = {k: dict(p, label=i18n.tr(p["label"])) for k, p in ai.OPENAI_PRESETS.items()}
+        return {"config": self.cfg.public(), "lang": i18n.LANG, "presets": presets, "anthropic_models": ai.ANTHROPIC_MODELS,
                 "engine": self.engine.describe(), "version": __version__,
                 "paths": {"config": paths.CONFIG_FILE, "data": paths.DATA_DIR}}
 
@@ -252,11 +255,13 @@ class App:
                 ai_patch["api_keys"] = keys
         patch.pop("detected", None)
         old_katago = dict(self.cfg["katago"])
+        old_lang = i18n.LANG
         if ai_patch is not None and "api_keys" in ai_patch:
             # _merge fusionne les dictionnaires : on remplace explicitement celui des clés
             self.cfg.data["ai"]["api_keys"] = ai_patch.pop("api_keys")
         self.cfg.update(patch)
-        if ai_patch is not None:
+        lang_changed = i18n.set_lang(self.cfg["ui"]["lang"]) != old_lang
+        if ai_patch is not None or lang_changed:  # la langue des réponses fait partie du rôle de Sensei
             self.coach.shutdown()
             self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
             if self.study.game:
@@ -264,6 +269,8 @@ class App:
             self.hub.send("chat", {"kind": "reload"})
         if self.cfg["katago"] != old_katago:
             self.engine.restart()
+        if lang_changed:
+            self.hub.send("engine", self.engine.describe())  # libellés de KataGo dans la nouvelle langue
         if "launch" in patch:
             from .config import set_autostart
             set_autostart(self.cfg["launch"]["autostart"])
@@ -402,7 +409,7 @@ def make_handler(app):
                 n = int(self.headers.get("Content-Length") or 0)
                 body = json.loads(self.rfile.read(n) or b"{}")
             except Exception:
-                return self._json({"error": "JSON invalide"}, 400)
+                return self._json({"error": i18n.tr("JSON invalide")}, 400)
             if p == "/mcp":
                 msgs = body if isinstance(body, list) else [body]
                 out = [r for r in (handle_rpc(app.tools, m) for m in msgs) if r is not None]
@@ -415,7 +422,7 @@ def make_handler(app):
             try:
                 return self._json(app.api(p, body))
             except KeyError as e:
-                return self._json({"error": f"inconnu : {e}"}, 404)
+                return self._json({"error": i18n.tr("inconnu : {what}", what=e)}, 404)
             except Exception as e:
                 return self._json({"error": str(e)}, 400)
 

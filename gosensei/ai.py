@@ -5,6 +5,7 @@ Tous les fournisseurs partagent la même interface : send / stop / reset, et
 diffusent les mêmes événements au navigateur (start, delta, tool, done, reset)."""
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -13,6 +14,8 @@ import urllib.error
 import urllib.request
 
 from . import paths
+from . import i18n
+from .i18n import coach_prompt, tr
 
 COACH_PROMPT = """Tu es « Sensei », un professeur de Go patient et pédagogue, intégré à l'appli Go Sensei.
 L'élève est débutant : il connaît les règles mais ne comprend pas encore la stratégie ni le « pourquoi » des coups.
@@ -34,10 +37,12 @@ Comment travailler :
 - Réponses courtes et structurées : quelques phrases ou puces, une idée principale par message, avec une petite règle
   à retenir quand c'est pertinent. Termine si utile par une question pour vérifier la compréhension.
 - Coordonnées : colonnes A-T sans la lettre I, ligne 1 en bas.
-- Français, ton chaleureux et encourageant, jamais condescendant.
+- Langue : réponds dans la langue de l'élève (celle de ses messages ; à défaut, celle de son interface).
+  Ton chaleureux et encourageant, jamais condescendant.
 - Mémoire : au début d'une conversation, lis le carnet de l'élève (read_student_profile). L'élève lit aussi ce carnet
   dans l'appli (bouton 📓 Carnet) : écris-y des notes claires et bienveillantes. Quand tu repères une faiblesse
   récurrente, un concept compris ou un progrès, note-le brièvement (save_student_note), APRÈS avoir écrit ton explication.
+  Écris chaque note dans la MÊME langue que ton message, même si le carnet contient déjà des notes dans une autre langue.
 - L'élève ne voit QUE le texte de tes messages : ni ta réflexion, ni ce que tu passes aux outils. Écris toujours
   l'explication en entier dans ta réponse ; ne la remplace jamais par « je l'ai noté dans ton carnet ».
 - Chaque message de l'élève commence par [Plateau : ...] qui résume ce qu'il voit : tiens-en compte."""
@@ -58,7 +63,7 @@ MAX_TOOL_ROUNDS = 25
 # il rédige parfois l'explication dans sa réflexion, que l'élève ne voit pas.
 EXPLAIN_FOLLOWUP = ("[Message automatique de l'appli, pas de l'élève] Ta réponse visible ne contient pas "
                     "d'explication : l'élève ne voit ni ta réflexion ni la note du carnet. Écris-lui maintenant, "
-                    "directement, la réponse que tu voulais lui donner, sans redire que tu as noté dans le carnet.")
+                    "directement, dans la langue de la conversation, la réponse que tu voulais lui donner, sans redire que tu as noté dans le carnet.")
 
 
 def key_slot(ai_cfg):
@@ -177,6 +182,30 @@ class Coach:
         self._current().setdefault("notes", []).append(text)
         self.broadcast("chat", {"kind": "note", "text": text})
 
+    def conversation_lang(self):
+        """Langue de l'échange en cours : celle de la réponse de Sensei, sinon celle du dernier
+        message de l'élève, sinon celle de l'interface."""
+        def own_words(text):  # sans les citations, qui peuvent être dans une autre langue
+            text = re.sub(r"«[^»]*»|“[^”]*”|\"[^\"]*\"", " ", text or "")
+            return re.sub(r"(?m)^\s*>.*$", " ", text)
+        t = self.turn or {}
+        lang = i18n.detect_lang(own_words(t.get("text", "")))
+        if not lang:
+            last = next((m["text"] for m in reversed(self.history) if m["role"] == "user"), "")
+            lang = i18n.detect_lang(own_words(last))
+        return lang or i18n.LANG
+
+    def note_language_problem(self, note):
+        """Refus (renvoyé au modèle) si la note n'est pas dans la langue de la conversation."""
+        want, got = self.conversation_lang(), i18n.detect_lang(note)
+        if not got or got == want:
+            return None
+        self.log(f"IA : note refusée ({got} au lieu de {want}), le modèle doit la réécrire")
+        name = i18n.LANG_NAMES.get(want, want)
+        return (f"NOTE NOT SAVED: it is written in {i18n.LANG_NAMES.get(got, got)}, but this conversation is in "
+                f"{name}. The student's notebook must follow the language of the conversation, even if older "
+                f"entries are in another language. Translate the note into {name} and call save_student_note again.")
+
     def finish(self, error=None):
         if error:
             self.emit_text(f"\n\n⚠️ {error}")
@@ -189,7 +218,7 @@ class Coach:
 
     def begin(self, text):
         if self.busy:
-            raise RuntimeError("Sensei est déjà en train de répondre")
+            raise RuntimeError(tr("Sensei est déjà en train de répondre"))
         self.busy = True
         self.history.append({"role": "user", "text": text})
         self.turn = {"role": "assistant", "text": "", "tools": []}
@@ -236,7 +265,7 @@ class Coach:
 
 class NoCoach(Coach):
     def send(self, text, context, rich_context=None):
-        raise RuntimeError("Aucune IA n'est configurée : ouvre ⚙ Réglages pour en choisir une (optionnel).")
+        raise RuntimeError(tr("Aucune IA n'est configurée : ouvre ⚙ Réglages pour en choisir une (optionnel)."))
 
 
 # =================================================================== Claude Code
@@ -273,7 +302,7 @@ class ClaudeCodeCoach(Coach):
                "--verbose", "--include-partial-messages",
                "--mcp-config", cfg, "--strict-mcp-config",
                "--tools", "", "--allowedTools", "mcp__gosensei", "--permission-mode", "dontAsk",
-               "--disable-slash-commands", "--append-system-prompt", COACH_PROMPT]
+               "--disable-slash-commands", "--append-system-prompt", coach_prompt(COACH_PROMPT)]
         if self.model:
             cmd += ["--model", self.model]
         if self.session_id:
@@ -317,7 +346,7 @@ class ClaudeCodeCoach(Coach):
                     return
                 self.finish(ev.get("result") or "erreur inconnue" if ev.get("is_error") else None)
         if self.busy:
-            self.finish("Claude Code s'est arrêté. Réessaie ton message.")
+            self.finish(tr("Claude Code s'est arrêté. Réessaie ton message."))
 
     def _restart_without_session(self, proc):
         self.log("IA : session Claude Code introuvable sur cette machine, nouvelle conversation")
@@ -336,7 +365,7 @@ class ClaudeCodeCoach(Coach):
             self.proc.stdin.flush()
         except (BrokenPipeError, OSError):
             self.proc = None
-            self.finish("Claude Code n'a pas pu démarrer : vérifie que la commande `claude` fonctionne dans un terminal.")
+            self.finish(tr("Claude Code n'a pas pu démarrer : vérifie que la commande `claude` fonctionne dans un terminal."))
 
     def send(self, text, context, rich_context=None):
         with self.lock:
@@ -441,7 +470,7 @@ class ApiCoach(Coach):
                 self.finish(self.describe_error(e))
 
     def describe_error(self, e):
-        return f"Erreur de l'IA : {e}"
+        return tr("Erreur de l'IA : {error}", error=e)
 
     def stop(self):
         self.cancel.set()
@@ -477,7 +506,7 @@ class AnthropicCoach(ApiCoach):
                 with self.client.beta.messages.stream(
                     model=self.model,
                     max_tokens=64000,
-                    system=COACH_PROMPT,
+                    system=coach_prompt(COACH_PROMPT),
                     tools=self.tool_defs,
                     messages=msgs,
                     thinking={"type": "adaptive"},
@@ -504,12 +533,12 @@ class AnthropicCoach(ApiCoach):
             return True
         tool_uses = [b for b in response.content if b.type == "tool_use"]
         if response.stop_reason == "refusal":
-            self.emit_text("\n\n(Le modèle a refusé de répondre à cette demande.)")
+            self.emit_text("\n\n" + tr("(Le modèle a refusé de répondre à cette demande.)"))
             return False
         if not tool_uses:
             return False
         if response.stop_reason == "max_tokens":
-            raise RuntimeError("réponse tronquée (max_tokens)")
+            raise RuntimeError(tr("réponse tronquée (max_tokens)"))
         results = []
         for b in tool_uses:
             out, err = self.run_tool(b.name, b.input)
@@ -520,13 +549,13 @@ class AnthropicCoach(ApiCoach):
     def describe_error(self, e):
         a = self.anthropic
         if isinstance(e, a.AuthenticationError):
-            return "Clé d'API Anthropic refusée : vérifie-la dans ⚙ Réglages."
+            return tr("Clé d'API Anthropic refusée : vérifie-la dans ⚙ Réglages.")
         if isinstance(e, a.RateLimitError):
-            return "Limite de requêtes atteinte, réessaie dans un instant."
+            return tr("Limite de requêtes atteinte, réessaie dans un instant.")
         if isinstance(e, a.APIStatusError):
-            return f"Erreur de l'API Anthropic ({e.status_code}) : {e.message}"
+            return tr("Erreur de l'API Anthropic ({code}) : {message}", code=e.status_code, message=e.message)
         if isinstance(e, a.APIConnectionError):
-            return "Impossible de joindre l'API Anthropic (connexion)."
+            return tr("Impossible de joindre l'API Anthropic (connexion).")
         return super().describe_error(e)
 
 
@@ -537,9 +566,9 @@ class OpenAICoach(ApiCoach):
         super().__init__(broadcast, log, tools, settings)
         self.base_url = (settings.get("base_url") or "").rstrip("/")
         if not self.base_url:
-            raise ValueError("adresse de l'API manquante")
+            raise ValueError(tr("adresse de l'API manquante"))
         if not settings.get("model"):
-            raise ValueError("modèle manquant")
+            raise ValueError(tr("modèle manquant"))
         self.tool_defs = [{"type": "function", "function": {"name": d["name"], "description": d["description"],
                                                             "parameters": d["inputSchema"]}}
                           for d in tools.definitions()]
@@ -556,7 +585,7 @@ class OpenAICoach(ApiCoach):
 
     def user_turn(self, msgs, content):
         if not msgs:
-            msgs.append({"role": "system", "content": COACH_PROMPT})
+            msgs.append({"role": "system", "content": coach_prompt(COACH_PROMPT)})
         msgs.append({"role": "user", "content": content})
 
     def _request_messages(self, msgs):
@@ -654,17 +683,19 @@ class OpenAICoach(ApiCoach):
             except (ValueError, AttributeError):
                 pass
             if "support tools" in detail or "does not support tool" in detail:
-                return (f"Le modèle « {self.settings.get('model')} » ne sait pas utiliser les outils du plateau. "
-                        "Choisis-en un autre dans ⚙ Réglages (ex. qwen3, llama3.1, mistral-small).")
+                return tr("Le modèle « {model} » ne sait pas utiliser les outils du plateau. "
+                          "Choisis-en un autre dans ⚙ Réglages (ex. qwen3, llama3.1, mistral-small).",
+                          model=self.settings.get("model"))
             if e.code in (401, 403):
-                return f"Clé d'API refusée ({e.code}) : vérifie-la dans ⚙ Réglages."
+                return tr("Clé d'API refusée ({code}) : vérifie-la dans ⚙ Réglages.", code=e.code)
             if e.code == 402:
-                return f"Le service refuse la requête faute de crédit sur ton compte ({detail})."
+                return tr("Le service refuse la requête faute de crédit sur ton compte ({detail}).", detail=detail)
             if e.code == 429:
-                return "Limite de requêtes atteinte, réessaie dans un instant."
-            return f"Erreur de l'API ({e.code}) : {detail}"
+                return tr("Limite de requêtes atteinte, réessaie dans un instant.")
+            return tr("Erreur de l'API ({code}) : {detail}", code=e.code, detail=detail)
         if isinstance(e, urllib.error.URLError):
-            return f"Impossible de joindre {self.base_url} ({e.reason}). Pour Ollama, vérifie qu'il est lancé."
+            return tr("Impossible de joindre {url} ({reason}). Pour Ollama, vérifie qu'il est lancé.",
+                      url=self.base_url, reason=e.reason)
         return super().describe_error(e)
 
 
@@ -692,7 +723,7 @@ def make_coach(ai_cfg, broadcast, log, tools, mcp_url):
     try:
         if provider == "claude-code":
             if not shutil.which("claude"):
-                raise RuntimeError("la commande `claude` (Claude Code) est introuvable")
+                raise RuntimeError(tr("la commande `claude` (Claude Code) est introuvable"))
             return ClaudeCodeCoach(broadcast, log, mcp_url, ai_cfg.get("model", ""))
         if provider == "anthropic":
             return AnthropicCoach(broadcast, log, tools, ai_cfg)
