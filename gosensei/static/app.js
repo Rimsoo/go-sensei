@@ -589,9 +589,18 @@ function linkCoords(html) {
     })).join("");
 }
 
+// Le chat suit les nouveaux messages tant que l'élève est en bas ; s'il remonte lire, on ne
+// le redescend plus jusqu'à ce qu'il revienne en bas (ou envoie un message).
+let chatFollow = true;
+function chatToBottom(box) {
+  box.style.scrollBehavior = "auto"; // instantané : un défilement animé ne suit pas le texte qui arrive
+  box.scrollTop = box.scrollHeight;
+  box.style.scrollBehavior = "";
+}
+
 function renderChat() {
   const box = $("#messages");
-  const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+  const top = box.scrollTop;
   box.innerHTML = "";
   $("#ai-label").textContent = chatInfo.enabled ? `· ${aiLabel(chatInfo.provider)}` : "";
   for (const id of ["#quick", "#chat-form"]) $(id).classList.toggle("hidden", !chatInfo.enabled);
@@ -621,7 +630,8 @@ function renderChat() {
     }
     box.appendChild(d);
   });
-  if (atBottom || busy) box.scrollTop = box.scrollHeight;
+  if (chatFollow) chatToBottom(box);
+  else box.scrollTop = top;
   $("#btn-send").classList.toggle("hidden", busy);
   $("#btn-stop").classList.toggle("hidden", !busy);
 }
@@ -647,6 +657,10 @@ $("#an-moves").addEventListener("click", (e) => {
   post("/api/play", { move: d.dataset.move }).catch(() => {});
 });
 
+$("#messages").addEventListener("scroll", (e) => {
+  const box = e.currentTarget;
+  chatFollow = box.scrollHeight - box.scrollTop - box.clientHeight < 60;
+});
 $("#messages").addEventListener("click", (e) => {
   if (e.target.closest(".msg-note")) return openNotes();
   const b = e.target.closest(".node-link");
@@ -663,6 +677,7 @@ async function sendChat(text) {
   if (!text || busy) return;
   chat.push({ role: "user", text });
   busy = true;
+  chatFollow = true;
   renderChat();
   try {
     await post("/api/chat", { text });
@@ -1121,11 +1136,8 @@ async function loadChat() {
     chatInfo = await (await fetch("/api/chat")).json();
     chat = chatInfo.history;
     busy = chatInfo.busy;
+    chatFollow = true; // à l'ouverture d'une conversation : directement au dernier message
     renderChat();
-    const box = $("#messages");
-    box.style.scrollBehavior = "auto"; // à l'ouverture d'une conversation : directement au dernier message
-    box.scrollTop = box.scrollHeight;
-    box.style.scrollBehavior = "";
   } catch {}
 }
 

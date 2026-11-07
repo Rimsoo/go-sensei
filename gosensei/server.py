@@ -79,7 +79,6 @@ class App:
         self.tools = Tools(self.study, paths.NOTES_FILE)
         self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
         self.tools.on_note = self._on_note
-        self.tools.check_note = lambda note: self.coach.note_language_problem(note)
         # Une conversation par partie : on suit la partie ouverte.
         self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")

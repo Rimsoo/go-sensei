@@ -54,9 +54,6 @@ class Tools:
         # vers chaque position expliquée, pour que l'élève puisse y revenir.
         self.on_node = None
         self.on_note = None  # appelé avec le texte d'une note ajoutée au carnet
-        # Appelé avec le texte d'une note avant de l'enregistrer : renvoie un message de refus
-        # (par exemple une note dans une autre langue que la conversation), ou None.
-        self.check_note = None
 
     def _shown(self):
         if self.on_node and self.s.game:
@@ -120,9 +117,6 @@ class Tools:
             {"name": "read_student_profile",
              "description": "Lit le carnet de l'élève : niveau, faiblesses récurrentes, progrès, notes des séances précédentes.",
              "inputSchema": {"type": "object", "properties": {}}},
-            {"name": "save_student_note",
-             "description": "Ajoute une note au carnet de l'élève (faiblesse récurrente, concept compris, progrès, réflexe à ancrer). La date est ajoutée automatiquement : ne l'écris pas. L'élève LIT ce carnet dans l'appli : écris des notes claires, bienveillantes et utiles pour lui aussi. Ce n'est PAS un moyen de répondre : la note est un court résumé, l'explication complète va dans ton message. Rédige la note dans la MÊME langue que ta réponse à l'élève, quelle que soit la langue des notes déjà présentes.",
-             "inputSchema": {"type": "object", "properties": {"note": {"type": "string"}}, "required": ["note"]}},
         ]
 
     # ---------------------------------------------------------------- outils
@@ -130,7 +124,7 @@ class Tools:
         fn = getattr(self, "t_" + name, None)
         if not fn:
             raise ValueError(f"outil inconnu : {name}")
-        if not self.s.game and name not in ("list_games", "load_game", "read_student_profile", "save_student_note"):
+        if not self.s.game and name not in ("list_games", "load_game", "read_student_profile"):
             return "Aucune partie n'est ouverte. Utilise list_games puis load_game, ou demande à l'élève d'en choisir une."
         return fn(**args)
 
@@ -329,12 +323,9 @@ class Tools:
         tail = text[-40000:]
         return "(début du carnet omis)\n" + tail[tail.find("\n") + 1:]
 
-    def t_save_student_note(self, note):
+    def save_note(self, note):
+        """Ajoute une note au carnet (rédigée par l'IA à la fin de sa réponse, hors outils)."""
         note = clean_note(note)
-        if self.check_note:
-            refusal = self.check_note(note)
-            if refusal:
-                return refusal
         new = not os.path.exists(self.notes_path)
         with open(self.notes_path, "a", encoding="utf-8") as f:
             if new:
@@ -345,9 +336,6 @@ class Tools:
                 self.on_note(note)
             except Exception:
                 pass
-        return ("Note enregistrée dans le carnet. Elle ne remplace pas ta réponse : l'élève ne voit que le texte "
-                "de ton message, pas ta réflexion. Si tu n'as pas encore écrit ton explication complète, écris-la maintenant.")
-
 
 def handle_rpc(tools, msg):
     """Traite un message JSON-RPC. Retourne la réponse (dict) ou None (notification)."""

@@ -90,8 +90,6 @@ EN = {
 # rédigé en français, seule la langue des réponses change.
 REPLY_IN_ENGLISH = ("\n\nIMPORTANT — LANGUAGE: the student's interface is in English. Answer in English "
                     "(clear, warm and encouraging) unless the student writes to you in another language, then use theirs. "
-                    "Notes you save in the student's notebook (save_student_note) MUST be written in the same language "
-                    "as your reply, even if the existing notebook entries are in French. "
                     "Use English Go terms (atari, ko, sente, gote, liberties, territory…).")
 
 

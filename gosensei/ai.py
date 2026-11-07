@@ -39,12 +39,10 @@ Comment travailler :
 - Coordonnées : colonnes A-T sans la lettre I, ligne 1 en bas.
 - Langue : réponds dans la langue de l'élève (celle de ses messages ; à défaut, celle de son interface).
   Ton chaleureux et encourageant, jamais condescendant.
-- Mémoire : au début d'une conversation, lis le carnet de l'élève (read_student_profile). L'élève lit aussi ce carnet
-  dans l'appli (bouton 📓 Carnet) : écris-y des notes claires et bienveillantes. Quand tu repères une faiblesse
-  récurrente, un concept compris ou un progrès, note-le brièvement (save_student_note), APRÈS avoir écrit ton explication.
-  Écris chaque note dans la MÊME langue que ton message, même si le carnet contient déjà des notes dans une autre langue.
+- Mémoire : au début d'une conversation, lis le carnet de l'élève (read_student_profile). Ne t'en occupe pas pendant
+  ta réponse : une fois ta réponse terminée, l'appli te demandera à part s'il y a quelque chose à y noter.
 - L'élève ne voit QUE le texte de tes messages : ni ta réflexion, ni ce que tu passes aux outils. Écris toujours
-  l'explication en entier dans ta réponse ; ne la remplace jamais par « je l'ai noté dans ton carnet ».
+  l'explication en entier dans ta réponse.
 - Chaque message de l'élève commence par [Plateau : ...] qui résume ce qu'il voit : tiens-en compte."""
 
 OPENAI_PRESETS = {
@@ -59,11 +57,16 @@ OPENAI_PRESETS = {
 ANTHROPIC_MODELS = ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]
 MAX_TOOL_ROUNDS = 25
 
-# Relance envoyée (une fois) quand le modèle a noté une leçon dans le carnet sans l'expliquer :
-# il rédige parfois l'explication dans sa réflexion, que l'élève ne voit pas.
-EXPLAIN_FOLLOWUP = ("[Message automatique de l'appli, pas de l'élève] Ta réponse visible ne contient pas "
-                    "d'explication : l'élève ne voit ni ta réflexion ni la note du carnet. Écris-lui maintenant, "
-                    "directement, dans la langue de la conversation, la réponse que tu voulais lui donner, sans redire que tu as noté dans le carnet.")
+# Le carnet est tenu à part : une fois la réponse à l'élève terminée, l'appli demande au modèle
+# (message invisible pour l'élève) la note à ajouter, et l'enregistre elle-même. Quand la note était
+# un outil utilisable pendant la réponse, le modèle y mettait parfois son explication et ne
+# répondait qu'une ligne à l'élève.
+NOTE_PROMPT = ("[Automatic message from the app, not from the student: the student does not see this exchange.] "
+               "Student's notebook: if this exchange showed something worth keeping (a recurring weakness, a concept "
+               "understood, progress, a reflex to build), reply with ONLY the note: one or two short sentences, clear "
+               "and kind (the student reads the notebook), written in {lang}, without a date. If there is nothing new "
+               "worth noting, reply with exactly NONE. Do not call any tool.")
+NOTE_ROUNDS = 3
 
 
 def key_slot(ai_cfg):
@@ -90,6 +93,8 @@ class Coach:
         self.history = []  # [{role, text, tools, nodes}] pour l'affichage
         self.turn = None  # message de l'IA en cours d'écriture
         self.turn_game = None
+        self.noting = False  # le modèle rédige la note du carnet (texte capturé, pas affiché)
+        self.note_text = ""
         self._load()
 
     # ------------------------------------------------------------ persistance
@@ -152,11 +157,16 @@ class Coach:
         return self.turn is None or self.turn_game == self.game_id
 
     def emit_text(self, txt):
+        if self.noting:
+            self.note_text += txt
+            return
         self._current()["text"] += txt
         if self._visible():
             self.broadcast("chat", {"kind": "delta", "text": txt})
 
     def emit_tool(self, name):
+        if self.noting:
+            return
         cur = self._current()
         cur["tools"].append(name)
         if cur["text"] and not cur["text"].endswith("\n\n"):
@@ -195,18 +205,25 @@ class Coach:
             lang = i18n.detect_lang(own_words(last))
         return lang or i18n.LANG
 
-    def note_language_problem(self, note):
-        """Refus (renvoyé au modèle) si la note n'est pas dans la langue de la conversation."""
-        want, got = self.conversation_lang(), i18n.detect_lang(note)
-        if not got or got == want:
-            return None
-        self.log(f"IA : note refusée ({got} au lieu de {want}), le modèle doit la réécrire")
-        name = i18n.LANG_NAMES.get(want, want)
-        return (f"NOTE NOT SAVED: it is written in {i18n.LANG_NAMES.get(got, got)}, but this conversation is in "
-                f"{name}. The student's notebook must follow the language of the conversation, even if older "
-                f"entries are in another language. Translate the note into {name} and call save_student_note again.")
+    def start_note(self):
+        """Passe à la rédaction de la note du carnet ; renvoie le message à envoyer au modèle."""
+        self.noting, self.note_text = True, ""
+        lang = self.conversation_lang()
+        return NOTE_PROMPT.format(lang=i18n.LANG_NAMES.get(lang, lang))
+
+    def end_note(self):
+        """Enregistre la note rédigée par le modèle (s'il en a écrit une)."""
+        self.noting = False
+        note = self.note_text.strip().strip("\"«»“” ")
+        if not note or re.fullmatch(r"\W*NONE\W*", note, re.I):
+            return
+        try:
+            self.tools.save_note(note)
+        except Exception as e:
+            self.log(f"IA : note du carnet non enregistrée ({e!r})")
 
     def finish(self, error=None):
+        self.noting = False
         if error:
             self.emit_text(f"\n\n⚠️ {error}")
         visible = self._visible()
@@ -223,21 +240,8 @@ class Coach:
         self.history.append({"role": "user", "text": text})
         self.turn = {"role": "assistant", "text": "", "tools": []}
         self.turn_game = self.game_id
-        self.followed_up = False
         self.history.append(self.turn)
         self.broadcast("chat", {"kind": "start"})
-
-    def needs_explanation(self):
-        """Une note a été prise ce tour-ci mais presque rien n'a été écrit pour l'élève :
-        renvoie True une seule fois (l'appelant relance alors le modèle avec EXPLAIN_FOLLOWUP)."""
-        t = self.turn
-        if self.followed_up or not t or "save_student_note" not in t["tools"] or len(t["text"].strip()) >= 300:
-            return False
-        self.followed_up = True
-        self.log("IA : note prise sans explication, relance du modèle")
-        if t["text"].strip():
-            self.emit_text("\n\n")
-        return True
 
     # ------------------------------------------------------------ interface
     def send(self, text, context, rich_context=None):
@@ -273,7 +277,8 @@ class ClaudeCodeCoach(Coach):
     """Claude Code en mode headless (abonnement Claude, sans clé d'API).
     Il n'a accès qu'aux outils MCP de Go Sensei (pas de shell, pas de fichiers)."""
 
-    def __init__(self, broadcast, log, mcp_url, model=""):
+    def __init__(self, broadcast, log, tools, mcp_url, model=""):
+        self.tools = tools
         self.mcp_url = mcp_url
         self.model = model
         self.proc = None
@@ -335,9 +340,16 @@ class ClaudeCodeCoach(Coach):
                 elif e.get("type") == "content_block_start" and e.get("content_block", {}).get("type") == "tool_use":
                     self.emit_tool(e["content_block"].get("name", "").replace("mcp__gosensei__", ""))
             elif t == "result":
-                if not ev.get("is_error") and self.needs_explanation():
+                if self.noting:
+                    if ev.get("is_error"):
+                        self.log(f"IA : note du carnet impossible ({ev.get('result')})")
+                    else:
+                        self.end_note()
+                    self.finish()
+                    continue
+                if not ev.get("is_error") and self.turn is not None:
                     with self.lock:
-                        self._write({"type": "user", "message": {"role": "user", "content": EXPLAIN_FOLLOWUP}})
+                        self._write({"type": "user", "message": {"role": "user", "content": self.start_note()}})
                     continue
                 if any("No conversation found" in e for e in ev.get("errors") or []):
                     # Session absente de cette machine (données copiées d'un autre PC,
@@ -454,20 +466,30 @@ class ApiCoach(Coach):
         # partie pendant la réponse, on n'écrit pas dans la conversation de l'autre partie).
         try:
             self.user_turn(msgs, content)
-            while True:
-                for _ in range(MAX_TOOL_ROUNDS):
-                    if self.cancel.is_set():
-                        return self.finish("(interrompu)")
-                    if not self.assistant_turn(msgs):
-                        break
-                if self.cancel.is_set() or not self.needs_explanation():
+            for _ in range(MAX_TOOL_ROUNDS):
+                if self.cancel.is_set():
+                    return self.finish("(interrompu)")
+                if not self.assistant_turn(msgs):
                     break
-                self.user_turn(msgs, EXPLAIN_FOLLOWUP)
+            if not self.cancel.is_set():
+                self.write_note(msgs)
             self.finish("(interrompu)" if self.cancel.is_set() else None)
         except Exception as e:
             self.log(f"IA : {e!r}")
             if not self.cancel.is_set():
                 self.finish(self.describe_error(e))
+
+    def write_note(self, msgs):
+        self.user_turn(msgs, self.start_note())
+        try:
+            for _ in range(NOTE_ROUNDS):
+                if self.cancel.is_set() or not self.assistant_turn(msgs):
+                    break
+            if not self.cancel.is_set():
+                self.end_note()
+        except Exception as e:  # la réponse est déjà là : une note ratée n'est pas une erreur pour l'élève
+            self.log(f"IA : note du carnet impossible ({e!r})")
+        self.noting = False
 
     def describe_error(self, e):
         return tr("Erreur de l'IA : {error}", error=e)
@@ -724,7 +746,7 @@ def make_coach(ai_cfg, broadcast, log, tools, mcp_url):
         if provider == "claude-code":
             if not shutil.which("claude"):
                 raise RuntimeError(tr("la commande `claude` (Claude Code) est introuvable"))
-            return ClaudeCodeCoach(broadcast, log, mcp_url, ai_cfg.get("model", ""))
+            return ClaudeCodeCoach(broadcast, log, tools, mcp_url, ai_cfg.get("model", ""))
         if provider == "anthropic":
             return AnthropicCoach(broadcast, log, tools, ai_cfg)
         if provider == "openai":
