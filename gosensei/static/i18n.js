@@ -199,6 +199,7 @@ const EN = {
   "Astuce : clique sur une erreur (en haut) pour te placer juste avant, puis demande « pourquoi ? ».":
     "Tip: click a mistake (above) to jump just before it, then ask “why?”.",
   "Ouvrir le carnet": "Open the notebook",
+  "Aller au coup {n}": "Go to move {n}",
   "Noté dans ton carnet": "Noted in your notebook",
   "Cette position n'existe plus (variante supprimée ?)": "This position no longer exists (variation deleted?)",
   "Commencer une nouvelle conversation ? (Ton carnet de progression est conservé.)":

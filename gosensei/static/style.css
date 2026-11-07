@@ -131,6 +131,8 @@ select.lang { background: var(--panel-2); color: var(--text); border: 1px solid 
 .msg.thinking .body::after { content: "▍"; animation: blink 1s steps(1) infinite; color: var(--accent); }
 @keyframes blink { 50% { opacity: 0; } }
 .coord { color: #8fd3c4; font-weight: 700; border-bottom: 1px dashed #8fd3c480; cursor: help; }
+.move-link { color: #8fd3c4; border-bottom: 1px solid #8fd3c480; cursor: pointer; }
+.move-link:hover { color: #fff; border-bottom-color: #fff; }
 .empty-chat { color: var(--muted); text-align: center; margin: auto; max-width: 420px; }
 .empty-chat b { color: var(--text); }
 

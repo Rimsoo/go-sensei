@@ -519,6 +519,8 @@ const TOOL_FR = {
 function inline(s) {
   return s
     .replace(/`([^`]+)`/g, "<code>$1</code>")
+    // [la variante C3](#pos-30) : lien vers une position que Sensei a montrée
+    .replace(/\[([^\]]+)\]\(#pos-(\d+)\)/g, '<span class="move-link" data-node="$2">🔀 $1</span>')
     .replace(/\*\*([^*]+)\*\*/g, "<b>$1</b>")
     .replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<i>$2</i>");
 }
@@ -582,10 +584,15 @@ function markdown(src) {
 
 function linkCoords(html) {
   const size = S && S.game ? S.game.size : 19;
+  const last = S && S.main ? S.main.length : 0;
   return html.split(/(<[^>]+>)/).map((part) => part.startsWith("<") ? part :
     part.replace(/\b([A-HJ-T])(\d{1,2})\b/g, (all, l, n) => {
       const x = LETTERS.indexOf(l), y = parseInt(n, 10);
       return x < size && y >= 1 && y <= size ? `<span class="coord" data-c="${all}">${all}</span>` : all;
+    // « coup 12 », « coups 12 à 15 », « move #12 » : lien vers ce coup de la partie
+    }).replace(/\b((?:coups?|moves?)\s+(?:n°\s*|#\s*)?)(\d{1,3})\b/gi, (all, word, n) => {
+      const k = parseInt(n, 10);
+      return k >= 1 && k <= last ? `<span class="move-link" data-n="${k}" title="${t("Aller au coup {n}", { n: k })}">${all}</span>` : all;
     })).join("");
 }
 
@@ -663,6 +670,10 @@ $("#messages").addEventListener("scroll", (e) => {
 });
 $("#messages").addEventListener("click", (e) => {
   if (e.target.closest(".msg-note")) return openNotes();
+  const v = e.target.closest(".move-link[data-node]"); // avant les liens de coups qu'il peut contenir
+  if (v) return post("/api/goto-node", { id: parseInt(v.dataset.node, 10) }).catch(() => toast(t("Cette position n'existe plus (variante supprimée ?)")));
+  const mv = e.target.closest(".move-link");
+  if (mv) return post("/api/goto", { n: parseInt(mv.dataset.n, 10) }).catch(() => {});
   const b = e.target.closest(".node-link");
   if (b) post("/api/goto-node", { id: parseInt(b.dataset.node, 10) }).catch(() => toast(t("Cette position n'existe plus (variante supprimée ?)")));
 });
