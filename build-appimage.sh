@@ -1,13 +1,14 @@
 #!/usr/bin/env bash
 # Construit GoSensei-x86_64.AppImage à partir de ce dossier.
 #
-#   ./build-appimage.sh             AppImage complète : Python + KataGo + réseaux (≈ 245 Mo)
+#   ./build-appimage.sh             AppImage avec Python et KataGo (GPU + CPU)
 #   BUNDLE_KATAGO=0 ./build-appimage.sh
-#                                   AppImage légère (≈ 40 Mo) : KataGo est téléchargé
-#                                   depuis l'interface au premier lancement
+#                                   sans KataGo : il est téléchargé au premier lancement
 #
 # Résultat : un fichier unique et exécutable qui embarque Python, Go Sensei,
 # le SDK Anthropic et (par défaut) KataGo. Rien à installer chez l'utilisateur.
+# Le réseau de neurones n'est pas embarqué (100 Mo pour b18) : l'appli télécharge
+# au premier lancement celui qui convient au PC (b18, b10, b6…).
 # La construction télécharge une image Python manylinux, appimagetool et KataGo
 # depuis leurs dépôts officiels : il lui faut un accès réseau. Les
 # téléchargements sont gardés dans .build-cache/ pour les constructions suivantes.
@@ -22,10 +23,7 @@ CACHE="$PROJET/.build-cache"
 BUNDLE_KATAGO="${BUNDLE_KATAGO:-1}"
 
 KATAGO_VERSION="$(python3 -c 'import re;print(re.search(r"KATAGO_VERSION = \"(.+?)\"", open("gosensei/katago.py").read())[1])')"
-# Réseaux embarqués : b18 pour les cartes graphiques, b10 pour les processeurs.
-MODELS="$(PYTHONPATH="$PROJET" python3 -c 'from gosensei.katago import MODEL_NAME, CPU_MODEL_NAME; print(MODEL_NAME, CPU_MODEL_NAME)')"
 RELEASE="https://github.com/lightvector/KataGo/releases/download/v$KATAGO_VERSION"
-MODELS_URL="$(PYTHONPATH="$PROJET" python3 -c 'from gosensei.katago import MODELS_URL; print(MODELS_URL)')"
 APPIMAGETOOL_URL="https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
 RUNTIME_URL="https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64"
 
@@ -75,9 +73,9 @@ telecharger() {  # url fichier
 }
 
 if [ "$BUNDLE_KATAGO" != "0" ]; then
-    echo "== ajout de KataGo $KATAGO_VERSION et des réseaux de neurones"
+    echo "== ajout de KataGo $KATAGO_VERSION"
     KDIR="$APPDIR/opt/katago"
-    mkdir -p "$KDIR/models"
+    mkdir -p "$KDIR"
     for build in opencl eigenavx2; do
         zip="$CACHE/katago-v$KATAGO_VERSION-$build-linux-x64.zip"
         telecharger "$RELEASE/katago-v$KATAGO_VERSION-$build-linux-x64.zip" "$zip"
@@ -94,13 +92,11 @@ for m in zf.namelist():
 os.chmod(os.path.join(sys.argv[2], "katago"), 0o755)
 unpack_appimage(os.path.join(sys.argv[2], "katago"))  # AppImage -> fichiers (pas de FUSE imbriqué)
 PY
+        # Les binaires officiels gardent leurs infos de débogage : ~110 Mo chacun, ~6 Mo sans.
+        find "$KDIR/$build/usr" -type f \( -name katago -o -name '*.so*' \) -exec strip --strip-unneeded {} +
     done
     telecharger "https://raw.githubusercontent.com/lightvector/KataGo/v$KATAGO_VERSION/LICENSE" "$CACHE/LICENSE-KataGo.txt"
     cp "$CACHE/LICENSE-KataGo.txt" "$KDIR/"
-    for model in $MODELS; do
-        telecharger "$MODELS_URL/$model" "$CACHE/$model"
-        cp "$CACHE/$model" "$KDIR/models/"
-    done
 fi
 
 echo "== assemblage de l'image"

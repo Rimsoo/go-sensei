@@ -35,8 +35,6 @@ NETWORKS = {
     "b18": {"file": "kata1-b18c384nbt-s9791399168-d4261348054.bin.gz", "size": 97_900_000,
             "label": "Très fort (b18)", "desc": "pour une carte graphique"},
 }
-MODEL_NAME = NETWORKS["b18"]["file"]
-CPU_MODEL_NAME = NETWORKS["b10"]["file"]
 
 STOPPED = "KataGo s'est arrêté"  # erreur reçue par les requêtes en cours quand le moteur s'arrête
 
