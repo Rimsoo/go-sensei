@@ -70,6 +70,7 @@ class Study:
         self.review = None
         self.resuming = False
         self.on_load = None  # rappel(id de partie) quand une partie est ouverte
+        self.on_change = None  # rappel() à chaque changement de position affichée (goban physique)
 
     def on_cpu(self):
         return self.engine.state.get("backend") in ("eigen", "eigenavx2")
@@ -353,6 +354,8 @@ class Study:
         self.start_live_analysis()
         self.start_line_analysis()
         self.broadcast_state()
+        if self.on_change:
+            self.on_change()
 
     # ------------------------------------------------------------ analyse
     def _parse(self, resp, moves):

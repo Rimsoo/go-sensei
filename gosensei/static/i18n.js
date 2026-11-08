@@ -7,6 +7,7 @@ const EN = {
   "📂 Parties": "📂 Games",
   "Ce que Sensei a noté sur tes progrès": "What Sensei noted about your progress",
   "📓 Carnet": "📓 Notebook",
+  "Suivre la position sur un goban physique filmé par IgOGS": "Follow the position on a physical goban filmed by IgOGS",
   "Aucune partie": "No game",
   "Suggestions IA": "AI suggestions",
   "Territoires": "Territory",

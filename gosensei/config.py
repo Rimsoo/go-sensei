@@ -35,6 +35,7 @@ DEFAULTS = {
         "folders": [],          # autres dossiers de fichiers SGF
     },
     "ogs": {"username": "", "sync_count": 0, "auto_sync": True},  # sync_count : 0 = toutes les parties
+    "goban": {"enabled": False, "url": "http://127.0.0.1:8742"},  # goban physique via IgOGS
     "ai": {
         "provider": "none",     # none | claude-code | anthropic | openai
         "preset": "",           # pour openai : openai, deepseek, ollama, openrouter, mistral, gemini, custom

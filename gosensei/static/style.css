@@ -55,6 +55,9 @@ select.lang { background: var(--panel-2); color: var(--text); border: 1px solid 
 .btn.ghost:hover { color: var(--text); background: var(--panel-2); }
 .btn.small { padding: 3px 8px; font-size: 13px; }
 .btn.icon { width: 40px; padding: 6px 0; }
+.btn.goban-on { border-color: var(--accent); color: var(--accent); }
+#goban-msg { max-width: 340px; overflow: hidden; text-overflow: ellipsis; }
+#goban-msg.warn { color: var(--warn); border-color: var(--warn); }
 .btn.variation { background: #3a2f12; border-color: var(--warn); color: var(--warn); margin-left: 8px; }
 
 /* ---------------------------------------------------------- mise en page */

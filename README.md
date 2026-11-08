@@ -80,6 +80,14 @@ Vivaldi), automatic shutdown when the window closes, and start with the session.
   variations it showed: one click takes you back to its explanation. It also keeps a notebook of your progress from
   one session to the next.
 
+## Physical goban (IgOGS)
+
+With [IgOGS](https://forgejo.aaaoz.fr/Rimso/IgOGS) running (a webcam filming your goban), click **📷 Goban**
+in the top bar: the displayed position is mirrored on your physical board (IgOGS tells you which stones to
+place or remove), and moves played on the board are played in Go Sensei — as variations, analysed live.
+Removing the last stones goes back. The setting is saved; the IgOGS address is `goban.url` in the config
+(default `http://127.0.0.1:8742`).
+
 ## Shortcuts
 
 | Key | Action |
@@ -120,6 +128,7 @@ to the PC (`kata1-b18c384nbt` or `kata1-b10c128`), from GitHub and katagotrainin
 - `gosensei/mcp.py`: the board tools, exposed over MCP at `/mcp` for Claude Code and called directly by the other
   providers.
 - `gosensei/ai.py`: AI providers.
+- `gosensei/goban_link.py`: physical goban through IgOGS (driver protocol client).
 - `gosensei/games.py`: game library (OGS, SGF, Conquest).
 - `gosensei/i18n.py` and `gosensei/static/i18n.js`: English translations. The code is written in French, and each
   dictionary maps the exact French text to its English version.

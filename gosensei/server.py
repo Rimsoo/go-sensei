@@ -14,6 +14,7 @@ from . import __version__, ai, i18n, paths
 from .board import to_gtp
 from .config import Config
 from .games import Library
+from .goban_link import GobanLink
 from .katago import Engine
 from .mcp import Tools, handle_rpc
 from .study import Study
@@ -82,6 +83,8 @@ class App:
         # Une conversation par partie : on suit la partie ouverte.
         self.study.on_load = lambda gid: self.coach.set_game(gid)
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
+        self.goban = GobanLink(self.cfg, self.study, self.hub.send, log)
+        self.study.on_change = self.goban.position_changed
         self.window = None
         self.tray = None
         self.server = None
@@ -102,6 +105,7 @@ class App:
             if self.tray:
                 self.tray.stop()
             self.coach.shutdown()
+            self.goban.stop()
             self.engine.stop()
             if self.server:
                 self.server.shutdown()
@@ -327,6 +331,8 @@ class App:
             self.engine.install()
         elif path == "/api/engine/restart":
             self.engine.restart()
+        elif path == "/api/goban":
+            return self.goban.set_enabled(body.get("enabled"))
         elif path == "/api/shutdown":
             self.shutdown("demandé depuis l'interface")
         else:
@@ -375,6 +381,7 @@ def make_handler(app):
                 "/api/chat": app.chat_info,
                 "/api/config": app.config_info,
                 "/api/notes": app.notes_info,
+                "/api/goban": app.goban.state,
                 "/api/logs": lambda: LOGS,
                 "/api/status": lambda: {"app": "go-sensei", "version": __version__},
             }
@@ -433,7 +440,8 @@ def make_handler(app):
             self.end_headers()
             q = app.hub.add()
             try:
-                for kind, data in (("state", app.study.state()), ("engine", app.engine.describe())):
+                for kind, data in (("state", app.study.state()), ("engine", app.engine.describe()),
+                                   ("goban", app.goban.state())):
                     self.wfile.write(f"event: {kind}\ndata: {json.dumps(data, ensure_ascii=False)}\n\n".encode())
                 self.wfile.flush()
                 while not app.stopping:

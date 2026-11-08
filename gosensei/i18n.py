@@ -12,6 +12,16 @@ LANGS = ("fr", "en")
 LANG = "fr"
 
 EN = {
+    # Goban physique (IgOGS)
+    "IgOGS ne répond pas : lancez-le (caméra du goban)": "IgOGS is not responding: start it (goban camera)",
+    "Goban utilisé par {owner}": "Goban used by {owner}",
+    "Noir": "Black",
+    "Blanc": "White",
+    "Goban synchronisé": "Goban in sync",
+    "En attente de la caméra": "Waiting for the camera",
+    "Retirez les pierres prises : {pts}": "Remove the captured stones: {pts}",
+    "posez {color} en {pts}": "place {color} at {pts}",
+    "retirez {pts}": "remove {pts}",
     # -- KataGo : états, réseaux, messages
     "KataGo non installé": "KataGo not installed",
     "téléchargement": "downloading",

@@ -849,6 +849,19 @@ function renderNotes() {
   }).join("");
 }
 $("#btn-notes").onclick = openNotes;
+
+// ------------------------------------------------------------------ goban physique (IgOGS)
+let goban = { enabled: false };
+function renderGoban() {
+  $("#btn-goban").classList.toggle("goban-on", !!goban.enabled);
+  const msg = $("#goban-msg");
+  msg.classList.toggle("hidden", !goban.enabled || !goban.message);
+  msg.textContent = goban.message || "";
+  msg.title = goban.error || goban.message || "";
+  msg.classList.toggle("ok", goban.status === "ok");
+  msg.classList.toggle("warn", goban.enabled && goban.status !== "ok");
+}
+$("#btn-goban").onclick = () => post("/api/goban", { enabled: !goban.enabled }).then((g) => { goban = g; renderGoban(); }).catch(() => {});
 $("#notes-search").addEventListener("input", renderNotes);
 $("#notes-edit").onclick = () => setNotesEditing(true);
 $("#notes-cancel").onclick = () => setNotesEditing(false);
@@ -1130,6 +1143,7 @@ function connect() {
     renderEngine(JSON.parse(e.data));
     if (!$("#settings-modal").classList.contains("hidden")) { renderEngineInfo(); fillNetworks(ENGINE); }
   });
+  es.addEventListener("goban", (e) => { goban = JSON.parse(e.data); renderGoban(); });
   es.addEventListener("notes", (e) => {
     notes = JSON.parse(e.data);
     if (!$("#notes-modal").classList.contains("hidden") && !notesEditing) renderNotes();
