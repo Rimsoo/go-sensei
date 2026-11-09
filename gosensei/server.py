@@ -17,6 +17,7 @@ from .games import Library
 from .goban_link import GobanLink
 from .katago import Engine
 from .mcp import Tools, handle_rpc
+from .play import Match
 from .study import Study
 from .tray import Tray
 from .window import Window
@@ -80,8 +81,10 @@ class App:
         self.tools = Tools(self.study, paths.NOTES_FILE)
         self.tools.on_node = lambda nid, label: self.coach.attach_node(nid, label)
         self.tools.on_note = self._on_note
+        self.match = Match(self.cfg, self.lib, self.study, self.engine, log)
+        self.study.match = self.match
         # Une conversation par partie : on suit la partie ouverte.
-        self.study.on_load = lambda gid: self.coach.set_game(gid)
+        self.study.on_load = self._on_load
         self.coach = ai.make_coach(self.cfg["ai"], self.hub.send, log, self.tools, self.url + "/mcp")
         self.goban = GobanLink(self.cfg, self.study, self.hub.send, log)
         self.study.on_change = self.goban.position_changed
@@ -141,6 +144,10 @@ class App:
             except Exception as e:
                 log(f"OGS : synchronisation impossible ({e})")
 
+    def _on_load(self, gid):
+        self.coach.set_game(gid)
+        self.match.on_load(gid)
+
     # ------------------------------------------------------------ infos
     def context(self):
         s = self.study
@@ -154,6 +161,11 @@ class App:
         else:
             txt += f"coup {s.cursor}/{len(s.main)} de la partie, "
         txt += f"au trait : {'Noir' if s.to_play() == 'B' else 'Blanc'}"
+        match = self.match.context()
+        if match:
+            txt += f" ; {match}"
+            if self.match.blind():
+                txt += " (l'élève joue sans aide : ne lui donne pas le meilleur coup sauf s'il le demande)"
         return txt
 
     def _on_note(self, text):
@@ -237,7 +249,7 @@ class App:
     def config_info(self):
         presets = {k: dict(p, label=i18n.tr(p["label"])) for k, p in ai.OPENAI_PRESETS.items()}
         return {"config": self.cfg.public(), "lang": i18n.LANG, "presets": presets, "anthropic_models": ai.ANTHROPIC_MODELS,
-                "engine": self.engine.describe(), "version": __version__,
+                "engine": self.engine.describe(), "version": __version__, "levels": self.match.levels(),
                 "paths": {"config": paths.CONFIG_FILE, "data": paths.DATA_DIR}}
 
     def apply_config(self, patch):
@@ -270,8 +282,11 @@ class App:
             if self.study.game:
                 self.coach.set_game(self.study.game["id"])
             self.hub.send("chat", {"kind": "reload"})
-        if self.cfg["katago"] != old_katago:
+        engine_keys = lambda k: {n: v for n, v in k.items() if n != "deep_check"}  # réglage de Go Sensei, pas du moteur
+        if engine_keys(self.cfg["katago"]) != engine_keys(old_katago):
             self.engine.restart()
+        elif self.cfg["katago"].get("deep_check") != old_katago.get("deep_check"):
+            self.study.changed()
         if lang_changed:
             self.hub.send("engine", self.engine.describe())  # libellés de KataGo dans la nouvelle langue
         if "launch" in patch:
@@ -299,7 +314,16 @@ class App:
         elif path == "/api/delete-node":
             s.delete_node(body["id"])
         elif path == "/api/play":
-            s.play([body["move"]])
+            if not self.match.user_move(body["move"]):
+                s.play([body["move"]])
+        elif path == "/api/match/start":
+            return {"id": self.match.start(body)}
+        elif path == "/api/match/pass":
+            self.match.user_pass()
+        elif path == "/api/match/resign":
+            self.match.resign()
+        elif path == "/api/match/options":
+            self.match.set_options(body)
         elif path == "/api/clear-marks":
             s.set_marks([], replace=True)
         elif path == "/api/import-sgf":
@@ -313,6 +337,8 @@ class App:
                 self.lib._cache.clear()
             return dict(res, games=self.lib.list())
         elif path == "/api/chat":
+            if not self.match.chat_allowed():
+                raise ValueError(i18n.tr("Sensei est désactivé pendant cette partie (option « Sensei en direct »)"))
             self.coach.send(body["text"], self.context(), self.rich_context())
         elif path == "/api/chat/stop":
             self.coach.stop()

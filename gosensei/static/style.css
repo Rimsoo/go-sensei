@@ -259,3 +259,15 @@ select.lang { background: var(--panel-2); color: var(--text); border: 1px solid 
   .chat { min-height: 70vh; }
   .evalbar { width: 140px; }
 }
+
+/* ---------------------------------------------------------- partie contre KataGo */
+.match-bar { display: flex; align-items: center; gap: 10px; flex: none; flex-wrap: wrap; padding: 6px 10px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--radius); font-size: 13px; }
+.match-bar .spacer { flex: 1; }
+.match-info b { color: var(--text); }
+.match-status { color: var(--accent); font-weight: 600; }
+.match-status.over { color: var(--text); }
+/* Sans aide : rien qui donne l'évaluation de KataGo pendant la partie */
+body.blind .graph-card:not(.tree-card), body.blind #analysis-card, body.blind #evalbar { visibility: hidden; }
+body.blind #analysis-card { display: none; }
+body.nochat .card.chat { display: none; }

@@ -53,7 +53,16 @@ Vivaldi), automatic shutdown when the window closes, and start with the session.
 - **Automatic review** of every game:
   - mistakes are classified as *inaccuracy*, *mistake* or *blunder*, with the points lost;
   - a graph shows how the score evolved;
-  - one click puts you right before the mistake.
+  - one click puts you right before the mistake;
+  - the review skims every move, so when you look at a move of the game, KataGo also checks the positions before
+    and after it in depth and corrects the graph and the mistakes (⚙ Settings → KataGo, on by default).
+- **Play against KataGo** (⚔ *Jouer*), on 9×9, 13×13 or 19×19:
+  - levels from 20 kyu to 9 dan play like a human of that rank, with the typical mistakes of that rank (KataGo's
+    "human" network, ≈ 99 MB, downloaded the first time); the maximum level is KataGo itself;
+  - *Live help* (graph, evaluation, suggestions, mistakes) and *Live Sensei* (chat) are optional and can be switched
+    on or off during the game; at the end, the full analysis is shown;
+  - you can go back and try variations during the game: only a move played at the end of the game counts;
+  - games are saved in the list (*Contre KataGo*) and an unfinished game resumes when you reopen it.
 - **Live analysis**:
   - the best moves are coloured by quality, and hovering shows the expected sequence;
   - the move actually played is circled;

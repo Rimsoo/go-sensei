@@ -78,7 +78,8 @@ class Library:
     # ------------------------------------------------------------ inventaire
     def _sources(self):
         """Liste de (motif glob, source, libellé)."""
-        out = [(os.path.join(paths.OGS_DIR, "*.sgf"), "ogs", "OGS"),
+        out = [(os.path.join(paths.LOCAL_DIR, "*.sgf"), "local", "Contre KataGo"),
+               (os.path.join(paths.OGS_DIR, "*.sgf"), "ogs", "OGS"),
                (os.path.join(paths.IMPORT_DIR, "*.sgf"), "import", "Importées")]
         conquest = self.cfg.conquest_dir()
         if conquest:
@@ -131,7 +132,8 @@ class Library:
                 pass
         student = self.student_color(g, source)
         e = {
-            "id": hashlib.sha1(raw).hexdigest()[:12],
+            # Une partie contre KataGo est réécrite à chaque coup : son id ne dépend pas du contenu.
+            "id": os.path.basename(path)[:-4] if source == "local" else hashlib.sha1(raw).hexdigest()[:12],
             "path": path,
             "source": source,
             "folder": label,

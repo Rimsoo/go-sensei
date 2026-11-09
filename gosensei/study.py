@@ -18,6 +18,10 @@ from .board import Board, IllegalMove, from_gtp, other, to_gtp
 # Seuils de perte (en points) pour classer les erreurs.
 MISTAKE_LEVELS = [(8.0, "gaffe"), (4.0, "erreur"), (1.5, "imprécision")]
 
+# Les nœuds de la partie ont pour id leur numéro de coup (0..N) ; ceux des variantes partent d'ici,
+# pour qu'une partie qui s'allonge (partie contre KataGo) ne rencontre jamais l'id d'une variante.
+VARIATION_BASE = 100_000
+
 
 def classify(loss):
     for threshold, name in MISTAKE_LEVELS:
@@ -67,6 +71,8 @@ class Study:
         self.node_evals = {}  # clé de position -> {"score", "winrate"} (graphique des variantes)
         self.live_qid = None
         self.line_qid = None
+        self.deep_qid = None
+        self.match = None  # partie en cours contre KataGo (play.Match), branchée par le serveur
         self.review = None
         self.resuming = False
         self.on_load = None  # rappel(id de partie) quand une partie est ouverte
@@ -80,6 +86,10 @@ class Study:
 
     def review_visits(self):
         return self.cfg["katago"]["review_visits"] or review_visits(self.size, self.on_cpu())
+
+    def blind(self):
+        """Partie contre KataGo jouée sans aide : ni analyse, ni courbe, ni suggestions."""
+        return bool(self.match and self.match.blind())
 
     @property
     def size(self):
@@ -228,7 +238,7 @@ class Study:
             for i, mv in enumerate(self.main, start=1):
                 self.nodes[i] = Node(i, i - 1, mv, "game", main=True)
                 self.nodes[i - 1].children.append(i)
-            self.next_id = len(self.main) + 1
+            self.next_id = max(len(self.main) + 1, VARIATION_BASE)
             self._load_tree()
             self.current = 0
             self.analyses = {}
@@ -315,6 +325,21 @@ class Study:
         self.changed()
         return played
 
+    def append_move(self, color, pt):
+        """Ajoute un coup au bout de la partie (partie contre KataGo). La position affichée
+        le suit si elle était au bout de la partie."""
+        with self.lock:
+            d = len(self.main)
+            self.board_for(self.main).play(color, pt)  # lève IllegalMove si illégal
+            self.main.append((color, pt))
+            nid = d + 1
+            self.nodes[nid] = Node(nid, d, (color, pt), "game", main=True)
+            self.nodes[d].children.insert(0, nid)  # la partie reste la suite principale
+            if self.current == d:
+                self.current = nid
+        self.extend_review(nid)
+        self.changed()
+
     def delete_node(self, nid):
         """Supprime une variante (le nœud et sa suite). La partie réelle ne peut pas être supprimée."""
         with self.lock:
@@ -353,6 +378,7 @@ class Study:
     def changed(self):
         self.start_live_analysis()
         self.start_line_analysis()
+        self.start_deep_check()
         self.broadcast_state()
         if self.on_change:
             self.on_change()
@@ -391,6 +417,8 @@ class Study:
             if self.live_qid:
                 self.engine.terminate(self.live_qid)
                 self.live_qid = None
+            if self.blind():
+                return
             cached = self.analyses.get(key)
             if cached and cached["final"]:
                 return
@@ -414,6 +442,7 @@ class Study:
                 self.analyses[key] = a
                 if a["final"]:
                     self.node_evals[key] = {"score": a["score"], "winrate": a["winrate"]}
+                    self._record_deep(moves, key, a)
                 current = self.key() == key
             if current and (a["final"] or time.time() - last[0] > 0.5):
                 last[0] = time.time()
@@ -436,9 +465,10 @@ class Study:
             self.resuming = False
             self.start_live_analysis()
             self.start_line_analysis()
+            self.start_deep_check()
             if self.review and self.review["status"] == "interrupted" and self.game \
                     and self.review["gid"] == self.game["id"]:
-                self.start_review()
+                self._continue_review(self.review)
 
         threading.Thread(target=run, daemon=True).start()
 
@@ -453,6 +483,8 @@ class Study:
             return
         with self.lock:
             self._stop_line_analysis()
+            if self.blind():
+                return
             line = self.line_ids()
             moves = [self.nodes[i].move for i in line[1:]]
             turns, keys = [], {}
@@ -503,6 +535,7 @@ class Study:
             if not prev or prev["visits"] <= a["visits"]:
                 self.analyses[key] = a
             self.node_evals[key] = {"score": a["score"], "winrate": a["winrate"]}
+            self._record_deep(moves, key, a)
         if key == self.key():
             self.broadcast_state()
         return a
@@ -532,23 +565,36 @@ class Study:
     def _review_path(self, gid):
         return os.path.join(self.review_dir, f"{gid}.json")
 
+    def _save_review(self, review):
+        try:
+            with open(self._review_path(review["gid"]), "w") as f:
+                json.dump({"moves": review["total"] - 1, "visits": review["visits"], "turns": review["turns"]}, f)
+        except OSError as e:
+            self.log(f"Revue : sauvegarde impossible ({e})")
+
     def start_review(self):
         g = self.game
         gid = g["id"]
         n = len(self.main)
         visits = self.review_visits()
+        kept = {}
         path = self._review_path(gid)
         if os.path.exists(path):
             try:
                 with open(path) as f:
                     saved = json.load(f)
+                turns = {int(k): v for k, v in saved["turns"].items()}
                 if saved.get("moves") == n and saved.get("visits") >= visits:
-                    turns = {int(k): v for k, v in saved["turns"].items()}
-                    self.review = {"gid": gid, "status": "done", "turns": turns, "total": n + 1}
+                    self.review = {"gid": gid, "status": "done", "turns": turns, "total": n + 1,
+                                   "visits": saved["visits"]}
                     return
+                # Partie qui s'est allongée (contre KataGo) ou revue plus profonde demandée :
+                # on garde ce qui reste valable, dont les coups déjà vérifiés en profondeur.
+                kept = {t: v for t, v in turns.items()
+                        if t <= n and (v.get("deep") or saved.get("visits", 0) >= visits)}
             except Exception:
                 pass
-        self.review = {"gid": gid, "status": "waiting", "turns": {}, "total": n + 1}
+        self.review = {"gid": gid, "status": "waiting", "turns": kept, "total": n + 1, "visits": visits}
         review = self.review
 
         def run():
@@ -557,46 +603,157 @@ class Study:
                 # Moteur tout juste prêt : l'analyse en direct part d'abord, sinon la revue
                 # occupe KataGo et la position affichée attend plusieurs secondes sur un CPU.
                 time.sleep(0.5)
-            if self.review is not review:
-                return
-            review["status"] = "running"
-            self.broadcast_state()
-            last = [0.0]
-
-            def cb(resp):
-                if resp.get("error") == STOPPED:
-                    review["status"] = "interrupted"  # reprise au redémarrage du moteur
-                    self._resume_after_restart()
-                    return
-                if "error" in resp:
-                    review["status"] = "error"
-                    self.log(f"Revue : {resp['error']}")
-                    return
-                if resp.get("isDuringSearch"):
-                    return
-                t = resp["turnNumber"]
-                ri = resp.get("rootInfo", {})
-                best = sorted(resp.get("moveInfos", []), key=lambda m: m.get("order", 99))
-                review["turns"][t] = {
-                    "winrate": ri.get("winrate"), "score": ri.get("scoreLead"),
-                    "best": best[0]["move"] if best else None,
-                    "pv": best[0].get("pv", [])[:8] if best else [],
-                    "alts": [{"move": m["move"], "score": m.get("scoreLead")} for m in best[:4]],
-                }
-                if len(review["turns"]) >= review["total"]:
-                    review["status"] = "done"
-                    with open(path, "w") as f:
-                        json.dump({"moves": n, "visits": visits, "turns": review["turns"]}, f)
-                    self.engine.forget(qid)
-                    self.broadcast_state()
-                elif time.time() - last[0] > 1.0:
-                    last[0] = time.time()
-                    self.broadcast_state()
-
-            q = dict(self.katago_base(self.main), maxVisits=visits, analyzeTurns=list(range(n + 1)), priority=0)
-            qid = self.engine.query(q, cb)
+            if self.review is review:
+                self._continue_review(review)
 
         threading.Thread(target=run, daemon=True).start()
+
+    def _continue_review(self, review):
+        """Analyse les positions de la partie qui manquent encore à la revue."""
+        todo = [t for t in range(review["total"]) if t not in review["turns"]]
+        if not todo:
+            review["status"] = "done"
+            self._save_review(review)
+            self.broadcast_state()
+            return
+        review["status"] = "running"
+        self.broadcast_state()
+        self._query_review(review, todo)
+
+    def extend_review(self, turn):
+        """La partie s'est allongée d'un coup : la revue analyse aussi la nouvelle position."""
+        review = self.review
+        if not review or not self.game or review["gid"] != self.game["id"]:
+            return
+        review["total"] = max(review["total"], turn + 1)
+        if review["status"] == "waiting":
+            return  # la revue n'a pas encore démarré : elle couvrira ce coup
+        review["status"] = "running"
+        threading.Thread(target=self._query_review, args=(review, [turn]), daemon=True).start()
+
+    def _query_review(self, review, todo):
+        remaining = set(todo)
+        last = [0.0]
+        qid = [None]
+
+        def cb(resp):
+            if resp.get("error") == STOPPED:
+                review["status"] = "interrupted"  # reprise au redémarrage du moteur
+                self._resume_after_restart()
+                return
+            if "error" in resp:
+                review["status"] = "error"
+                self.log(f"Revue : {resp['error']}")
+                return
+            if resp.get("isDuringSearch"):
+                return
+            t = resp["turnNumber"]
+            ri = resp.get("rootInfo", {})
+            best = sorted(resp.get("moveInfos", []), key=lambda m: m.get("order", 99))
+            entry = {
+                "winrate": ri.get("winrate"), "score": ri.get("scoreLead"),
+                "best": best[0]["move"] if best else None,
+                "pv": best[0].get("pv", [])[:8] if best else [],
+                "alts": [{"move": m["move"], "score": m.get("scoreLead")} for m in best[:4]],
+            }
+            with self.lock:
+                if not review["turns"].get(t, {}).get("deep"):  # une analyse profonde vaut mieux
+                    review["turns"][t] = entry
+                remaining.discard(t)
+                finished = len(review["turns"]) >= review["total"]
+            if not remaining and qid[0]:
+                self.engine.forget(qid[0])
+            if finished and review["status"] != "done":
+                review["status"] = "done"
+                self._save_review(review)
+                self.broadcast_state()
+            elif finished:
+                self._save_review(review)  # partie qui s'allonge : nouveau coup ajouté à la revue
+                self.broadcast_state()
+            elif time.time() - last[0] > 1.0:
+                last[0] = time.time()
+                self.broadcast_state()
+
+        moves = list(self.main)
+        q = dict(self.katago_base(moves), maxVisits=review["visits"], analyzeTurns=sorted(todo), priority=0)
+        qid[0] = self.engine.query(q, cb)
+
+    # ------------------------------------------------------------ vérification en profondeur
+    def _main_depth(self, moves):
+        """Numéro du coup si `moves` est une position de la partie réelle, sinon None."""
+        n = len(moves)
+        return n if n <= len(self.main) and list(moves) == self.main[:n] else None
+
+    def _record_deep(self, moves, key, a):
+        """Une analyse en direct (bien plus de visites que la revue) d'une position de la partie
+        remplace celle de la revue : la courbe et les erreurs sont corrigées."""
+        if not self.cfg["katago"].get("deep_check", True) or not a.get("moves") or a.get("score") is None:
+            return False
+        review = self.review
+        if not review or not self.game or review["gid"] != self.game["id"] or key != self.key(moves):
+            return False
+        d = self._main_depth(moves)
+        if d is None or a["visits"] <= review["visits"]:
+            return False
+        cur = review["turns"].get(d)
+        if cur and cur.get("deep", 0) >= a["visits"]:
+            return False
+        review["turns"][d] = {
+            "winrate": a["winrate"], "score": a["score"], "best": a["moves"][0]["move"],
+            "pv": a["moves"][0]["pv"][:8], "deep": a["visits"],
+            "alts": [{"move": m["move"], "score": m["score"]} for m in a["moves"][:4]],
+        }
+        if review["status"] == "done":
+            self._save_review(review)
+        return True
+
+    def start_deep_check(self):
+        """Sur un coup de la partie, vérifie aussi en profondeur les positions juste avant et juste
+        après : la perte du coup qu'on regarde (et du suivant) devient fiable."""
+        if not self.game:
+            return
+        with self.lock:
+            if self.deep_qid:
+                self.engine.terminate(self.deep_qid)
+                self.deep_qid = None
+            if not self.cfg["katago"].get("deep_check", True) or self.blind() or not self.nodes[self.current].main:
+                return
+            review = self.review
+            if not review or review["gid"] != self.game["id"]:
+                return
+            d = len(self.moves())
+            visits = self.live_visits()
+            turns = []
+            for t in (d - 1, d + 1):
+                if 0 <= t <= len(self.main) and review["turns"].get(t, {}).get("deep", 0) < visits * 0.9:
+                    a = self.analyses.get(self.key(self.main[:t]))
+                    if not (a and a["final"] and a["visits"] >= visits * 0.9):
+                        turns.append(t)
+            if not turns:
+                return
+            main = list(self.main)
+            gid = self.game["id"]
+            q = dict(self.katago_base(main), maxVisits=visits, analyzeTurns=turns, includeOwnership=True, priority=5)
+        if not self.engine.ready.is_set():
+            return
+
+        def cb(resp):
+            if "error" in resp or resp.get("isDuringSearch") or not self.game or self.game["id"] != gid:
+                return
+            moves = main[:resp.get("turnNumber", 0)]
+            a = self._parse(resp, moves)
+            key = a["key"]
+            with self.lock:
+                prev = self.analyses.get(key)
+                if prev and prev["final"] and prev["visits"] >= a["visits"]:
+                    return
+                self.analyses[key] = a
+                self.node_evals[key] = {"score": a["score"], "winrate": a["winrate"]}
+                changed = self._record_deep(moves, key, a)
+            if changed:
+                self.broadcast_state()
+
+        self.deep_qid = self.engine.query(q, cb)
 
     def mistakes(self):
         """Liste des erreurs de la partie (ligne principale) d'après la revue."""
@@ -688,16 +845,18 @@ class Study:
             g = self.game
             last = moves[-1] if moves else None
             review = None
-            if self.review:
+            blind = self.blind()
+            if self.review and not blind:
                 r = self.review
                 review = {
                     "status": r["status"],
                     "done": len(r["turns"]),
                     "total": r["total"],
+                    "deep": sum(1 for v in r["turns"].values() if v.get("deep")),
                     "curve": [[t, v["winrate"], v["score"]] for t, v in sorted(r["turns"].items())],
                     "mistakes": [m for m in self.mistakes() if m["level"]],
                 }
-            a = self.analyses.get(self.key(moves))
+            a = None if blind else self.analyses.get(self.key(moves))
             line = self.line_ids()
             branch = next((d for d, nid in enumerate(line) if not self.nodes[nid].main), None)
             tree = []
@@ -728,7 +887,8 @@ class Study:
                 "tree": tree,
                 "current": self.current,
                 "line": line,
-                "lineEvals": self._line_evals(line),
+                "lineEvals": [None] * len(line) if blind else self._line_evals(line),
+                "match": self.match.state() if self.match and self.match.active() else None,
                 "branch": branch,
                 "nodeLabel": self.describe_node(),
             }

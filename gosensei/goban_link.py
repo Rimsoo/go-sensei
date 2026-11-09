@@ -203,7 +203,11 @@ class GobanLink:
             self._notify()
         elif kind == "move" and d.get("owner") == OWNER and d.get("applied"):
             try:
-                self.study.play([d["move"]])
+                # Partie contre KataGo : le coup posé au bout de la partie est un coup de la partie
+                # (comme un clic sur le plateau), pas une variante.
+                match = self.study.match
+                if not (match and match.user_move(d["move"])):
+                    self.study.play([d["move"]])
             except Exception as e:  # position modifiée entre-temps : IgOGS se resynchronise
                 self.log(f"Goban : coup {d['move']} non joué ({e})")
                 self._claim_due.set()

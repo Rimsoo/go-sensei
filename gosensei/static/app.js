@@ -324,7 +324,7 @@ function renderInfo() {
   const r = S.review;
   const st = $("#review-status");
   if (!r) st.textContent = "";
-  else if (r.status === "done") st.textContent = t("revue terminée");
+  else if (r.status === "done") st.textContent = t("revue terminée") + (r.deep ? t(" · {n} coups vérifiés en profondeur", { n: r.deep }) : "");
   else if (r.status === "error") st.textContent = t("revue : erreur");
   else st.textContent = t("revue KataGo : {done}/{total}", { done: r.done, total: r.total });
   if (r) {
@@ -485,8 +485,80 @@ function renderTree() {
     : t("joue un coup sur le plateau pour créer une variante");
 }
 
+// ------------------------------------------------------------------ partie contre KataGo
+function resultText(res, student) {
+  const m = /^([BW])\+(.*)$/.exec(res || "");
+  if (!m) return res || "";
+  const how = m[2] === "R" ? t("par abandon") : t("de {pts} points", { pts: m[2] });
+  if (student) return t(m[1] === student ? "Tu as gagné {how} !" : "KataGo a gagné {how}.", { how });
+  return t("{color} gagne {how}", { color: colorName(m[1]), how });
+}
+
+function renderMatch() {
+  const M = S && S.match;
+  const live = !!(M && !M.over);
+  document.body.classList.toggle("blind", live && !M.help);
+  document.body.classList.toggle("nochat", live && !M.chat);
+  $("#match-bar").classList.toggle("hidden", !M);
+  if (!M) return;
+  $("#match-info").innerHTML = t("Contre <b>{level}</b> · tu joues {color}", { level: esc(M.levelName), color: colorName(M.student) });
+  const st = $("#match-status");
+  st.classList.toggle("over", M.over);
+  st.textContent = M.over ? (M.result ? resultText(M.result, M.student) : t("Partie terminée"))
+    : M.message ? M.message
+    : M.thinking ? t("KataGo réfléchit…")
+    : M.toPlay === M.student ? t(M.atTip ? "À toi de jouer" : "À toi de jouer (au dernier coup de la partie)")
+    : "";
+  $("#match-help").checked = M.help;
+  $("#match-chat").checked = M.chat;
+  for (const id of ["#match-pass", "#match-resign"]) $(id).classList.toggle("hidden", M.over);
+  for (const id of ["#match-help", "#match-chat"]) $(id).closest("label").classList.toggle("hidden", M.over);
+  $("#match-pass").disabled = M.thinking || M.toPlay !== M.student;
+  $("#match-tip").classList.toggle("hidden", M.atTip || M.over);
+}
+$("#match-help").onchange = (e) => post("/api/match/options", { help: e.target.checked }).catch(() => {});
+$("#match-chat").onchange = (e) => post("/api/match/options", { chat: e.target.checked }).then(loadChat).catch(() => {});
+$("#match-pass").onclick = () => post("/api/match/pass").catch(() => {});
+$("#match-resign").onclick = () => { if (confirm(t("Abandonner la partie ?"))) post("/api/match/resign").catch(() => {}); };
+$("#match-tip").onclick = () => post("/api/goto", { n: S.match.tip }).catch(() => {});
+
+async function openPlay() {
+  await loadConfig();
+  const f = $("#play-form"), p = CFG.config.play || {};
+  f.level.innerHTML = (CFG.levels || []).map((l) => `<option value="${l.key}">${esc(l.label)}</option>`).join("");
+  f.size.value = String(p.size || 9);
+  f.color.value = p.color || "B";
+  f.level.value = p.level || "rank_15k";
+  f.help.checked = !!p.help;
+  f.chat.checked = !!p.chat;
+  updatePlayNote();
+  $("#play-status").textContent = "";
+  $("#play-modal").classList.remove("hidden");
+}
+function updatePlayNote() {
+  const level = $("#play-form").level.value, E = ENGINE || CFG.engine || {};
+  $("#play-level-note").textContent = level === "max"
+    ? t("KataGo à pleine puissance : imbattable, pour voir comment joue la machine.")
+    : t("KataGo joue comme un humain de ce niveau, avec les erreurs typiques de ce niveau.")
+      + (E.human ? "" : " " + t("Au premier lancement, Go Sensei télécharge le réseau « humain » de KataGo (≈ {n} Mo).", { n: Math.round((E.human_size || 99e6) / 1e6) }));
+}
+$("#play-form").level.addEventListener("change", updatePlayNote);
+$("#play-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const f = e.target;
+  $("#play-status").textContent = t("Préparation de la partie…");
+  try {
+    await post("/api/match/start", { size: +f.size.value, color: f.color.value, level: f.level.value,
+      help: f.help.checked, chat: f.chat.checked });
+    $("#play-modal").classList.add("hidden");
+    loadChat();
+  } catch { $("#play-status").textContent = ""; }
+});
+$("#btn-play").onclick = openPlay;
+
 function render() {
   if (!S) return;
+  renderMatch();
   renderInfo();
   renderBoard();
   renderTree();
@@ -1028,6 +1100,7 @@ $("#settings-form").addEventListener("submit", async (e) => {
     ai: { provider: field("ai.provider").value, preset: field("ai.preset").value, base_url: field("ai.base_url").value.trim(),
           model: field("ai.model").value.trim(), api_key: field("ai.api_key").value.trim() },
     katago: { backend: field("katago.backend").value, network: field("katago.network").value, live_visits: num("katago.live_visits"), review_visits: num("katago.review_visits"),
+              deep_check: field("katago.deep_check").checked,
               binary: field("katago.binary").value.trim(), model: field("katago.model").value.trim() },
     ogs: { username: field("ogs.username").value.trim(), auto_sync: field("ogs.auto_sync").checked, sync_count: num("ogs.sync_count") },
     sources: { conquest: mode === "auto" ? "auto" : mode === "off" ? "" : field("sources.conquest_path").value.trim(),

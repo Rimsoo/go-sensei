@@ -29,7 +29,10 @@ DEFAULTS = {
         "model": "",            # chemin d'un réseau .bin.gz personnel (optionnel, prioritaire)
         "live_visits": 0,       # 0 = automatique selon la taille du plateau
         "review_visits": 0,
+        "deep_check": True,     # revérifier en profondeur la position affichée et corriger la courbe
     },
+    # Dernières options choisies pour une partie contre KataGo
+    "play": {"size": 9, "color": "B", "level": "rank_15k", "help": False, "chat": False},
     "sources": {
         "conquest": "auto",     # auto = détection, "" = désactivé, sinon chemin
         "folders": [],          # autres dossiers de fichiers SGF

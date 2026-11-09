@@ -36,6 +36,11 @@ NETWORKS = {
             "label": "Très fort (b18)", "desc": "pour une carte graphique"},
 }
 
+# Réseau « humain » (KataGo 1.15+) : il prédit le coup que jouerait un humain d'un rang donné.
+# Sert aux niveaux de l'adversaire dans les parties contre KataGo.
+HUMAN_NETWORK = {"file": "b18c384nbt-humanv0.bin.gz", "size": 99_066_230,
+                 "url": "https://github.com/lightvector/KataGo/releases/download/v1.15.0/b18c384nbt-humanv0.bin.gz"}
+
 STOPPED = "KataGo s'est arrêté"  # erreur reçue par les requêtes en cours quand le moteur s'arrête
 
 STATE_LABELS = {
@@ -99,6 +104,7 @@ class Engine:
         self.installing = False
         self.last_error = ""
         self.wake = threading.Event()  # réveille la boucle après une installation
+        self.human_loaded = False  # KataGo lancé avec le réseau « humain »
         self.state = {"state": "stopped", "backend": None, "progress": None, "message": "", "download": None}
 
     # ------------------------------------------------------------ statut
@@ -123,6 +129,7 @@ class Engine:
         model = self.find_model(kind)
         suggested, reason = self.suggest_network(kind)
         return dict(self.state, label=self.status, model=model, binaries=self.available_binaries(),
+                    human=bool(self.human_model()) and kind != "custom", human_size=HUMAN_NETWORK["size"],
                     can_install=not (model and self.available_binaries()),
                     network=self.network_of(model), suggested=suggested, suggestion=reason,
                     networks=[dict(key=k, label=tr(n["label"]), desc=tr(n["desc"]), size=n["size"],
@@ -164,6 +171,44 @@ class Engine:
             if c and os.path.isfile(c):
                 return c
         return None
+
+    def human_model(self):
+        """Réseau « humain » s'il est présent (embarqué ou téléchargé)."""
+        cands = [os.path.join(paths.KATAGO_DIR, "models", HUMAN_NETWORK["file"])]
+        bundled = paths.bundled_katago_dir()
+        if bundled:
+            cands.insert(0, os.path.join(bundled, "models", HUMAN_NETWORK["file"]))
+        return next((c for c in cands if os.path.isfile(c)), None)
+
+    def human_ready(self):
+        """KataGo tourne avec le réseau « humain » chargé."""
+        return self.ready.is_set() and bool(self.human_loaded)
+
+    def install_human(self):
+        """Télécharge le réseau « humain » en arrière-plan, puis relance KataGo avec."""
+        if self.installing or self.human_model():
+            return
+        self.installing = True
+
+        def run():
+            try:
+                self.log("Téléchargement du réseau « humain » de KataGo")
+                d = os.path.join(paths.KATAGO_DIR, "models")
+                os.makedirs(d, exist_ok=True)
+                part = os.path.join(d, HUMAN_NETWORK["file"] + ".part")
+                self._set(download={"progress": 0})
+                self._download(HUMAN_NETWORK["url"], part, 0, HUMAN_NETWORK["size"],
+                               lambda pc: self._set(download={"progress": pc}))
+                os.replace(part, os.path.join(d, HUMAN_NETWORK["file"]))
+                self._set(download=None)
+                self.restart(retry_gpu=False)
+            except Exception as e:
+                self.log(f"Téléchargement échoué : {e}")
+                self._set(download=None, message=tr("Téléchargement échoué : {error}", error=e))
+            finally:
+                self.installing = False
+
+        threading.Thread(target=run, daemon=True).start()
 
     def network_of(self, model):
         if not model:
@@ -343,8 +388,14 @@ class Engine:
         model = self.find_model(kind)
         threads = 16 if kind in ("opencl", "custom") else max(2, os.cpu_count() or 4)
         overrides = f"logDir={paths.LOG_DIR},numSearchThreads={threads}"
-        return [binary, "analysis", "-config", os.path.join(paths.RESOURCES, "analysis.cfg"),
-                "-model", model, "-override-config", overrides]
+        cmd = [binary, "analysis", "-config", os.path.join(paths.RESOURCES, "analysis.cfg"),
+               "-model", model, "-override-config", overrides]
+        human = self.human_model()
+        # Un KataGo personnel peut être trop ancien pour l'option (1.15+).
+        self.human_loaded = bool(human) and kind != "custom"
+        if self.human_loaded:
+            cmd += ["-human-model", human]
+        return cmd
 
     def _loop(self):
         for kind in BUILDS:

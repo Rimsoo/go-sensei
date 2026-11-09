@@ -94,6 +94,23 @@ EN = {
     # -- icône de notification
     "Ouvrir Go Sensei": "Open Go Sensei",
     "Quitter Go Sensei": "Quit Go Sensei",
+    # -- partie contre KataGo
+    "taille de plateau non gérée : {size}": "unsupported board size: {size}",
+    "niveau inconnu : {level}": "unknown level: {level}",
+    "couleur inconnue : {color}": "unknown color: {color}",
+    "Moi": "Me",
+    "aucune partie contre KataGo en cours": "no game against KataGo in progress",
+    "C'est à KataGo de jouer": "It's KataGo's turn",
+    "Ce n'est pas à toi de jouer": "It's not your turn",
+    "Comptage des points…": "Counting the score…",
+    "Comptage impossible : {error}": "Counting failed: {error}",
+    "KataGo n'a pas pu jouer : {error}": "KataGo could not play: {error}",
+    "partie fermée": "game closed",
+    "Téléchargement du réseau « humain » de KataGo : {p:.0f} %": "Downloading KataGo's \"human\" network: {p:.0f} %",
+    "Démarrage de KataGo…": "Starting KataGo…",
+    "réseau « humain » indisponible": "\"human\" network unavailable",
+    "réseau « humain » non chargé par KataGo": "\"human\" network not loaded by KataGo",
+    "Sensei est désactivé pendant cette partie (option « Sensei en direct »)": "Sensei is disabled during this game (\"Live Sensei\" option)",
 }
 
 # Ajouté au rôle de Sensei quand l'interface est en anglais : le rôle reste

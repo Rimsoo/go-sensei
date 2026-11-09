@@ -1,8 +1,8 @@
-"""Lecture minimale de fichiers SGF (ligne principale uniquement)."""
+"""Lecture minimale de fichiers SGF (ligne principale uniquement) et écriture d'une partie simple."""
 
 import sys
 
-from .board import from_sgf
+from .board import from_sgf, to_sgf
 
 # Les SGF d'OGS imbriquent chaque coup dans une variation : un arbre par coup.
 sys.setrecursionlimit(max(sys.getrecursionlimit(), 10000))
@@ -127,3 +127,17 @@ def parse_sgf(text):
         "first_player": prop("PL", "") or (moves[0][0] if moves else ("W" if setup["B"] and not setup["W"] else "B")),
         "moves": moves,
     }
+
+
+def _esc(v):
+    return str(v).replace("\\", "\\\\").replace("]", "\\]")
+
+
+def write_sgf(g):
+    """SGF d'une partie : {size, komi, rules, black, white, black_rank, white_rank, result, date, moves}."""
+    props = [("GM", 1), ("FF", 4), ("CA", "UTF-8"), ("AP", "GoSensei"), ("SZ", g["size"]), ("KM", g["komi"]),
+             ("RU", g.get("rules", "japanese").capitalize()), ("PB", g["black"]), ("PW", g["white"]),
+             ("BR", g.get("black_rank", "")), ("WR", g.get("white_rank", "")), ("DT", g.get("date", "")),
+             ("RE", g.get("result", ""))]
+    head = "".join(f"{k}[{_esc(v)}]" for k, v in props if v != "")
+    return f"(;{head}" + "".join(f";{c}[{to_sgf(p)}]" for c, p in g["moves"]) + ")\n"
