@@ -317,10 +317,10 @@ class Tools:
             return "Carnet vide : première séance."
         with open(self.notes_path, encoding="utf-8") as f:
             text = f.read()
-        if len(text) <= 40000:
+        if len(text) <= 15000:
             return text
         # Trop long : on garde les notes les plus récentes, en coupant entre deux lignes.
-        tail = text[-40000:]
+        tail = text[-15000:]
         return "(début du carnet omis)\n" + tail[tail.find("\n") + 1:]
 
     def save_note(self, note):

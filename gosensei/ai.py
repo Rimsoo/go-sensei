@@ -64,10 +64,13 @@ MAX_TOOL_ROUNDS = 25
 # un outil utilisable pendant la réponse, le modèle y mettait parfois son explication et ne
 # répondait qu'une ligne à l'élève.
 NOTE_PROMPT = ("[Automatic message from the app, not from the student: the student does not see this exchange.] "
-               "Student's notebook: if this exchange showed something worth keeping (a recurring weakness, a concept "
-               "understood, progress, a reflex to build), reply with ONLY the note: one or two short sentences, clear "
-               "and kind (the student reads the notebook), written in {lang}, without a date. If there is nothing new "
-               "worth noting, reply with exactly NONE. Do not call any tool.")
+               "Student's notebook: it is your memory for FUTURE sessions, not a log of this one. Add a note only if "
+               "this exchange revealed something durable that the notebook does not already say: a new recurring "
+               "weakness, a misconception, a concept now understood, a clear step of progress, an instruction or "
+               "preference of the student about how to teach. No game summary, no move-by-move review, nothing "
+               "personal (mood, private life). Most exchanges add nothing: then reply with exactly NONE. Otherwise "
+               "reply with ONLY the note: one short sentence, general enough to be useful in another game, written "
+               "in {lang}, without a date. Do not call any tool.")
 NOTE_ROUNDS = 3
 
 
